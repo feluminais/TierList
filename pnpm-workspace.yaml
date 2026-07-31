@@ -3,9 +3,14 @@ packages:
   - "packages/*"
   - "services/*"
 allowBuilds:
-  # Both resolve their native binary from prebuilt platform-specific optional
-  # deps (@img/sharp-*, @unrs/resolver-binding-*). Neither postinstall is
-  # needed to obtain that binary:
+  # All three resolve their native binary from prebuilt platform-specific
+  # optional deps (@esbuild/*, @img/sharp-*, @unrs/resolver-binding-*). No
+  # postinstall is needed to obtain that binary:
+  #   esbuild       the prebuilt @esbuild/<platform> binary is already present;
+  #                 the postinstall only creates the standalone `esbuild` CLI
+  #                 shim, which vite/vitest never invoke (they use the JS API).
+  #                 A future package shelling out to the esbuild CLI would need
+  #                 this flipped to true.
   #   sharp         install/check.js only opts into a *source* build when a
   #                 system libvips is present; denying it pins us to prebuilts.
   #   unrs-resolver napi-postinstall repairs a missing binding by downloading
@@ -13,5 +18,6 @@ allowBuilds:
   # NOTE: this denial is workspace-wide and applies to future *direct*
   # dependents (e.g. services/api). For cross-platform deploys use
   # supportedArchitectures, not this flag.
+  esbuild: false
   sharp: false
   unrs-resolver: false

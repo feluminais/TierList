@@ -1,1 +1,1 @@
-export const PACKAGE_NAME = "@tl/core";
+export * from "./types";

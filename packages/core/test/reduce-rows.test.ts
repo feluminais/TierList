@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createTierList } from "../src/factory";
+import { createTierList, defaultImageEdit } from "../src/factory";
 import { reduce } from "../src/reduce";
 
 const NOW = "2026-07-31T12:00:00.000Z";
@@ -80,5 +80,60 @@ describe("reduce — row/reorder", () => {
   it("clamps an out-of-range target index", () => {
     const next = reduce(base(), { type: "row/reorder", rowId: "list-1-row-0", toIndex: 99 }, LATER);
     expect(next.rows.map((r) => r.label)).toEqual(["A", "B", "C", "D", "S"]);
+  });
+});
+
+describe("reduce — misses are genuine no-ops", () => {
+  it("does not bump revision when the target row does not exist", () => {
+    const doc = base();
+    const next = reduce(doc, { type: "row/rename", rowId: "nope", label: "X" }, LATER);
+    expect(next).toBe(doc);
+  });
+
+  it("does not bump revision when removing an item that does not exist", () => {
+    const doc = base();
+    const next = reduce(doc, { type: "item/remove", itemId: "nope" }, LATER);
+    expect(next).toBe(doc);
+  });
+
+  it("does not bump revision when recoloring a row that does not exist", () => {
+    const doc = base();
+    const next = reduce(doc, { type: "row/recolor", rowId: "nope", color: "#000000" }, LATER);
+    expect(next).toBe(doc);
+  });
+
+  it("does not bump revision when removing a row that does not exist", () => {
+    const doc = base();
+    const next = reduce(doc, { type: "row/remove", rowId: "nope" }, LATER);
+    expect(next).toBe(doc);
+  });
+
+  it("does not bump revision when editing an item that does not exist", () => {
+    const doc = base();
+    const next = reduce(
+      doc,
+      { type: "item/setEdit", itemId: "nope", edit: defaultImageEdit() },
+      LATER,
+    );
+    expect(next).toBe(doc);
+  });
+
+  it("does not bump revision when reordering a row that does not exist", () => {
+    const doc = base();
+    const next = reduce(doc, { type: "row/reorder", rowId: "nope", toIndex: 0 }, LATER);
+    expect(next).toBe(doc);
+  });
+
+  it("does not bump revision when unplacing an item that does not exist", () => {
+    const doc = base();
+    const next = reduce(doc, { type: "placement/unplace", itemId: "nope" }, LATER);
+    expect(next).toBe(doc);
+  });
+
+  it("still bumps revision when the target does exist", () => {
+    const doc = base();
+    const next = reduce(doc, { type: "row/rename", rowId: "list-1-row-0", label: "God" }, LATER);
+    expect(next).not.toBe(doc);
+    expect(next.revision).toBe(1);
   });
 });

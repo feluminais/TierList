@@ -22,23 +22,28 @@ function apply(doc: TierList, action: TierListAction): TierList {
       return { ...doc, rows: [...doc.rows, row] };
     }
 
-    case "row/rename":
+    case "row/rename": {
+      if (!doc.rows.some((r) => r.id === action.rowId)) return doc;
       return {
         ...doc,
         rows: doc.rows.map((r) =>
           r.id === action.rowId ? { ...r, label: action.label } : r,
         ),
       };
+    }
 
-    case "row/recolor":
+    case "row/recolor": {
+      if (!doc.rows.some((r) => r.id === action.rowId)) return doc;
       return {
         ...doc,
         rows: doc.rows.map((r) =>
           r.id === action.rowId ? { ...r, color: action.color } : r,
         ),
       };
+    }
 
-    case "row/remove":
+    case "row/remove": {
+      if (!doc.rows.some((r) => r.id === action.rowId)) return doc;
       return {
         ...doc,
         rows: renumber(doc.rows.filter((r) => r.id !== action.rowId)),
@@ -46,6 +51,7 @@ function apply(doc: TierList, action: TierListAction): TierList {
           p.rowId === action.rowId ? { ...p, rowId: null, index: 0 } : p,
         ),
       };
+    }
 
     case "row/reorder": {
       const from = doc.rows.findIndex((r) => r.id === action.rowId);
@@ -90,7 +96,8 @@ function apply(doc: TierList, action: TierListAction): TierList {
       };
     }
 
-    case "item/remove":
+    case "item/remove": {
+      if (!doc.items.some((i) => i.id === action.itemId)) return doc;
       return {
         ...doc,
         items: doc.items
@@ -98,14 +105,17 @@ function apply(doc: TierList, action: TierListAction): TierList {
           .map((i, idx) => ({ ...i, order: idx })),
         placements: doc.placements.filter((p) => p.itemId !== action.itemId),
       };
+    }
 
-    case "item/setEdit":
+    case "item/setEdit": {
+      if (!doc.items.some((i) => i.id === action.itemId)) return doc;
       return {
         ...doc,
         items: doc.items.map((i) =>
           i.id === action.itemId ? { ...i, edit: action.edit } : i,
         ),
       };
+    }
 
     case "placement/place": {
       const others = doc.placements.filter((p) => p.itemId !== action.itemId);

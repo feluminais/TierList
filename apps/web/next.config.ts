@@ -8,18 +8,20 @@ const nextConfig: NextConfig = {
     "react-native-web",
   ],
   turbopack: {
-    root: path.resolve(process.cwd(), "..", ".."),
+    // Derived from this file's location, not process.cwd(): the cwd-relative
+    // form silently produced a wrong root (and a "couldn't find the Next.js
+    // package" warning) when the dev server was launched from another
+    // directory.
+    root: path.resolve(__dirname, "..", ".."),
     resolveAlias: {
       "react-native": "react-native-web",
-      // `@tl/editor-spike` has an intentionally empty manifest and no
-      // node_modules of its own, so bare specifiers in its source cannot be
-      // resolved by walking up from packages/editor-spike/.
-      "@shopify/react-native-skia": "./node_modules/@shopify/react-native-skia",
       // Skia's Platform.web.js reaches into react-native's internal asset
       // registry; react-native-web ships the same module with getAssetByID.
       "react-native/Libraries/Image/AssetRegistry":
         "react-native-web/dist/modules/AssetRegistry",
-      // Dead Node-only branch inside the canvaskit Emscripten glue.
+      // Dead Node-only branch inside the canvaskit Emscripten glue
+      // (`if (isNode) { require("fs"); require("path"); ... }`), which
+      // Turbopack still resolves statically for the browser bundle.
       fs: { browser: "./stubs/empty.js" },
       path: { browser: "./stubs/empty.js" },
     },

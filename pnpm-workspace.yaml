@@ -2,3 +2,9 @@ packages:
   - "apps/*"
   - "packages/*"
   - "services/*"
+allowBuilds:
+  # Both ship prebuilt platform binaries as optional deps
+  # (@img/sharp-*, @unrs/resolver-binding-*), so their postinstall
+  # scripts are only a source-build fallback and are not needed.
+  sharp: false
+  unrs-resolver: false

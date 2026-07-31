@@ -3,8 +3,15 @@ packages:
   - "packages/*"
   - "services/*"
 allowBuilds:
-  # Both ship prebuilt platform binaries as optional deps
-  # (@img/sharp-*, @unrs/resolver-binding-*), so their postinstall
-  # scripts are only a source-build fallback and are not needed.
+  # Both resolve their native binary from prebuilt platform-specific optional
+  # deps (@img/sharp-*, @unrs/resolver-binding-*). Neither postinstall is
+  # needed to obtain that binary:
+  #   sharp         install/check.js only opts into a *source* build when a
+  #                 system libvips is present; denying it pins us to prebuilts.
+  #   unrs-resolver napi-postinstall repairs a missing binding by downloading
+  #                 a tarball at install time; denying it keeps installs hermetic.
+  # NOTE: this denial is workspace-wide and applies to future *direct*
+  # dependents (e.g. services/api). For cross-platform deploys use
+  # supportedArchitectures, not this flag.
   sharp: false
   unrs-resolver: false

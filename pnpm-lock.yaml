@@ -52,6 +52,8 @@ importers:
         specifier: ~5.9.0
         version: 5.9.3
 
+  packages/editor-spike: {}
+
 packages:
 
   '@alloc/quick-lru@5.2.0':

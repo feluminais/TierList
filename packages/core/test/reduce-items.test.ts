@@ -1,0 +1,146 @@
+import { describe, expect, it } from "vitest";
+import { createTierList } from "../src/factory";
+import { reduce } from "../src/reduce";
+import type { TierList } from "../src/types";
+
+const NOW = "2026-07-31T12:00:00.000Z";
+const S = "list-1-row-0";
+const A = "list-1-row-1";
+
+function withItems(ids: string[]): TierList {
+  let doc = createTierList({ id: "list-1", now: NOW });
+  for (const id of ids) {
+    doc = reduce(doc, { type: "item/addText", id, label: id }, NOW);
+  }
+  return doc;
+}
+
+describe("item/addText and item/addImage", () => {
+  it("adds the item to the tray, not to a row", () => {
+    const doc = withItems(["i1"]);
+    expect(doc.items[0]).toMatchObject({ id: "i1", kind: "text", order: 0 });
+    expect(doc.placements[0]).toMatchObject({ itemId: "i1", rowId: null });
+  });
+
+  it("gives an image item its asset id and a default edit", () => {
+    let doc = createTierList({ id: "list-1", now: NOW });
+    doc = reduce(doc, { type: "item/addImage", id: "i1", assetId: "asset-9" }, NOW);
+    expect(doc.items[0]).toMatchObject({ kind: "image", assetId: "asset-9" });
+    expect(doc.items[0]!.edit.zoom).toBe(1);
+  });
+
+  it("assigns increasing order values", () => {
+    const doc = withItems(["i1", "i2", "i3"]);
+    expect(doc.items.map((i) => i.order)).toEqual([0, 1, 2]);
+  });
+});
+
+describe("item/remove", () => {
+  it("removes the item, its placement, and renumbers the remaining items", () => {
+    const doc = reduce(withItems(["i1", "i2", "i3"]), { type: "item/remove", itemId: "i2" }, NOW);
+    expect(doc.items.map((i) => i.id)).toEqual(["i1", "i3"]);
+    expect(doc.items.map((i) => i.order)).toEqual([0, 1]);
+    expect(doc.placements.find((p) => p.itemId === "i2")).toBeUndefined();
+  });
+});
+
+describe("item/setEdit", () => {
+  it("replaces the edit for the target item only", () => {
+    let doc = withItems(["i1", "i2"]);
+    doc = reduce(
+      doc,
+      {
+        type: "item/setEdit",
+        itemId: "i1",
+        edit: {
+          crop: { x: 0.1, y: 0.1, w: 0.5, h: 0.5 },
+          rotation: 90,
+          zoom: 2,
+          offset: { x: 0.2, y: 0 },
+          strokes: [{ id: "s1", points: [0, 0, 1, 1], color: "#fff", width: 4 }],
+        },
+      },
+      NOW,
+    );
+    expect(doc.items[0]!.edit.rotation).toBe(90);
+    expect(doc.items[0]!.edit.strokes).toHaveLength(1);
+    expect(doc.items[1]!.edit.rotation).toBe(0);
+  });
+});
+
+describe("placement/place", () => {
+  it("places an item into a row at the requested index", () => {
+    let doc = withItems(["i1"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: S, index: 0 }, NOW);
+    expect(doc.placements).toEqual([{ itemId: "i1", rowId: S, index: 0 }]);
+  });
+
+  it("shifts existing items to make room and keeps indices contiguous", () => {
+    let doc = withItems(["i1", "i2", "i3"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: S, index: 0 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: S, index: 1 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i3", rowId: S, index: 1 }, NOW);
+
+    const inS = doc.placements
+      .filter((p) => p.rowId === S)
+      .sort((a, b) => a.index - b.index);
+    expect(inS.map((p) => p.itemId)).toEqual(["i1", "i3", "i2"]);
+    expect(inS.map((p) => p.index)).toEqual([0, 1, 2]);
+  });
+
+  it("moves an item between rows without duplicating it", () => {
+    let doc = withItems(["i1"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: S, index: 0 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: A, index: 0 }, NOW);
+
+    expect(doc.placements.filter((p) => p.itemId === "i1")).toHaveLength(1);
+    expect(doc.placements[0]).toMatchObject({ rowId: A, index: 0 });
+  });
+
+  it("clamps an out-of-range index to the end of the row", () => {
+    let doc = withItems(["i1", "i2"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: S, index: 0 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: S, index: 99 }, NOW);
+
+    const inS = doc.placements
+      .filter((p) => p.rowId === S)
+      .sort((a, b) => a.index - b.index);
+    expect(inS.map((p) => p.itemId)).toEqual(["i1", "i2"]);
+  });
+});
+
+describe("placement/unplace", () => {
+  it("returns the item to the tray and closes the gap behind it", () => {
+    let doc = withItems(["i1", "i2", "i3"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: S, index: 0 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: S, index: 1 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i3", rowId: S, index: 2 }, NOW);
+    doc = reduce(doc, { type: "placement/unplace", itemId: "i2" }, NOW);
+
+    const inS = doc.placements
+      .filter((p) => p.rowId === S)
+      .sort((a, b) => a.index - b.index);
+    expect(inS.map((p) => p.itemId)).toEqual(["i1", "i3"]);
+    expect(inS.map((p) => p.index)).toEqual([0, 1]);
+    expect(doc.placements.find((p) => p.itemId === "i2")).toMatchObject({ rowId: null });
+  });
+});
+
+describe("display/set and meta/set", () => {
+  it("patches display settings without clearing the others", () => {
+    const doc = reduce(withItems([]), { type: "display/set", patch: { tileSize: 160 } }, NOW);
+    expect(doc.display.tileSize).toBe(160);
+    expect(doc.display.showLabels).toBe(true);
+  });
+
+  it("patches metadata", () => {
+    const doc = reduce(
+      withItems([]),
+      { type: "meta/set", patch: { title: "Ramen", tags: ["food"] } },
+      NOW,
+    );
+    expect(doc.title).toBe("Ramen");
+    expect(doc.tags).toEqual(["food"]);
+    expect(doc.description).toBe("");
+  });
+});

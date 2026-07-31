@@ -7,7 +7,11 @@ dist/
 build/
 .next/
 .expo/
+.turbo/
 *.tsbuildinfo
+
+# Test coverage
+coverage/
 
 # Environment
 .env

@@ -1,0 +1,69 @@
+import {
+  SCHEMA_VERSION,
+  type DisplaySettings,
+  type ImageEdit,
+  type Row,
+  type TierList,
+} from "./types";
+
+const DEFAULT_ROWS: ReadonlyArray<{ label: string; color: string }> = [
+  { label: "S", color: "#ff7f7f" },
+  { label: "A", color: "#ffbf7f" },
+  { label: "B", color: "#ffff7f" },
+  { label: "C", color: "#bfff7f" },
+  { label: "D", color: "#7fbfff" },
+];
+
+export function defaultImageEdit(): ImageEdit {
+  return {
+    crop: { x: 0, y: 0, w: 1, h: 1 },
+    rotation: 0,
+    zoom: 1,
+    offset: { x: 0, y: 0 },
+    strokes: [],
+  };
+}
+
+export function defaultDisplay(): DisplaySettings {
+  return {
+    tileSize: 96,
+    tileAspect: "square",
+    labelWidth: 120,
+    density: "normal",
+    showLabels: true,
+  };
+}
+
+export interface CreateTierListParams {
+  id: string;
+  now: string;
+  title?: string;
+  authorId?: string;
+}
+
+export function createTierList(params: CreateTierListParams): TierList {
+  const rows: Row[] = DEFAULT_ROWS.map((r, i) => ({
+    id: `${params.id}-row-${i}`,
+    label: r.label,
+    color: r.color,
+    order: i,
+  }));
+
+  return {
+    id: params.id,
+    schemaVersion: SCHEMA_VERSION,
+    title: params.title ?? "Untitled tier list",
+    description: "",
+    categoryId: null,
+    tags: [],
+    rows,
+    items: [],
+    placements: [],
+    display: defaultDisplay(),
+    boardAnnotations: [],
+    authorId: params.authorId,
+    createdAt: params.now,
+    updatedAt: params.now,
+    revision: 0,
+  };
+}

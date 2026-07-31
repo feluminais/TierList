@@ -67,6 +67,13 @@ export interface TierList {
   display: DisplaySettings;
   boardAnnotations: Stroke[];
   templateId?: string;
+  /**
+   * The template's `revision` at the moment this fill was started. Records the
+   * tier scale the fill was ranked against, which cannot be reconstructed later
+   * because both the fill's rows and the template's rows can change afterwards.
+   * Compare must treat differing values as a condition to surface, not average over.
+   */
+  templateRevision?: number;
   authorId?: string;
   createdAt: string; // ISO 8601
   updatedAt: string; // ISO 8601

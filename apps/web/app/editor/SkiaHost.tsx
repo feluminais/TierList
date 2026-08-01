@@ -19,17 +19,24 @@ import {
 } from "react";
 import { Toolbar } from "./Toolbar";
 import { useApiClient } from "./useApiClient";
+import { useAssetUpload } from "./useAssetUpload";
 import { useAutosave, type AutosaveHandlers } from "./useAutosave";
 
 type BoardProps = {
   doc: TierList;
   width: number;
   onAction: (action: TierListAction) => void;
+  onTap?: (itemId: string) => void;
+  assetIds?: readonly string[];
+  assetUrl?: (assetId: string) => string;
 };
 
 /** Width the board is laid out against. Also the width of the surface below
  *  that claims touch input, so the two cannot drift apart. */
 const BOARD_WIDTH = 800;
+
+/** Where this browser's list id is remembered between visits. */
+const LIST_ID_KEY = "tl.listId";
 
 /**
  * Nothing Skia-related may be imported at module scope in this file.
@@ -73,10 +80,68 @@ export default function SkiaHost() {
     };
   }, []);
 
+  // The list this page edits. Persisted so a reload returns to the same
+  // document — which is Milestone 3's actual acceptance test. Chosen in an
+  // effect rather than during render because `localStorage` does not exist on
+  // the server and a value read during render would differ between the two.
+  const [listId, setListId] = useState<string | null>(null);
+  useEffect(() => {
+    let id = window.localStorage.getItem(LIST_ID_KEY);
+    if (!id) {
+      id = newId();
+      window.localStorage.setItem(LIST_ID_KEY, id);
+    }
+    setListId(id);
+  }, []);
+
   // The document, its history and its saved state, together. `null` for the
   // synced revision says the server has never seen this document, so the first
-  // write will be a create.
-  const [session, setSession] = useState(() => createSession(sampleDoc(), null));
+  // write will be a create. This placeholder is replaced the moment `listId`
+  // (and, if there is a client, a load) resolves — see the effect below — so
+  // it is never what a save actually goes out against.
+  const [session, setSession] = useState(() => createSession(sampleDoc("preview"), null));
+  // Whether `session` is actually the list this route means to edit, rather
+  // than the "preview" placeholder above. Gates autosave below: without it, a
+  // slow `getList` round trip leaves the placeholder's `syncedRevision: null`
+  // in place for up to a whole debounce window, which is enough on a slow
+  // connection for autosave to issue a real `createList` for a document
+  // nobody asked to save, under an id ("preview") a real list will never
+  // reuse.
+  const [loaded, setLoaded] = useState(false);
+
+  // `process.env.NEXT_PUBLIC_API_URL` is written out in full so the bundler can
+  // inline it; a destructured or computed read is not substituted.
+  const connection = useApiClient(process.env.NEXT_PUBLIC_API_URL);
+  const client = connection.state === "connected" ? connection.client : null;
+
+  useEffect(() => {
+    if (!listId) return;
+    if (!client) {
+      // No API configured is the normal state of this route. Start a local
+      // document under the real id so nothing downstream has to special-case it.
+      setSession(createSession(sampleDoc(listId), null));
+      setLoaded(true);
+      return;
+    }
+    let alive = true;
+    (async () => {
+      const existing = await client.getList(listId).catch(() => null);
+      if (!alive) return;
+      // A document the server already holds starts *synced* at its own
+      // revision. Starting at null would make the first write a create, which
+      // the create-only PUT rejects with a 409 — landing a returning visitor
+      // straight in conflict. That is exactly the open item this fixes.
+      setSession(
+        existing
+          ? createSession(existing, existing.revision)
+          : createSession(sampleDoc(listId), null),
+      );
+      setLoaded(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [listId, client]);
 
   // The clock lives here, at the boundary, exactly as it does in the gesture
   // hook. A drag emits at most one action, so this runs once per completed
@@ -107,10 +172,38 @@ export default function SkiaHost() {
     [dispatch],
   );
 
-  // `process.env.NEXT_PUBLIC_API_URL` is written out in full so the bundler can
-  // inline it; a destructured or computed read is not substituted.
-  const connection = useApiClient(process.env.NEXT_PUBLIC_API_URL);
-  const client = connection.state === "connected" ? connection.client : null;
+  const onUploaded = useCallback(
+    (assetId: string) => dispatch({ type: "item/addImage", id: newId(), assetId }),
+    [dispatch],
+  );
+  const upload = useAssetUpload(client, onUploaded);
+  const onAddImage = useCallback((file: File) => void upload.upload(file), [upload]);
+
+  const assetUrl = useCallback(
+    (id: string) => (client ? client.assetUrl(id) : ""),
+    [client],
+  );
+  // Gated on `client` rather than only on the document: an id with nowhere to
+  // fetch from would still get handed to `Skia.Data.fromURI("")`, which
+  // resolves against *this page's own URL* rather than rejecting or hanging —
+  // a wasted request that decodes as garbage and marks the tile "failed" for
+  // no reason a user could act on. Simplest to just not ask.
+  const assetIds = useMemo(
+    () =>
+      client ? session.doc.items.map((i) => i.assetId).filter((a): a is string => !!a) : [],
+    [session.doc.items, client],
+  );
+
+  const onTileSize = useCallback(
+    (tileSize: number) => dispatch({ type: "display/set", patch: { tileSize } }),
+    [dispatch],
+  );
+
+  // Which tile a tap opened a sheet for, if any. `onTap` is the handler
+  // `useBoardGesture`/`dragReduce` have had a slot for since Milestone 2D —
+  // "2D gives this a meaning" never happened until now.
+  const [editing, setEditing] = useState<string | null>(null);
+  const onTap = useCallback((itemId: string) => setEditing(itemId), []);
 
   // Stable, and every one of them a functional update, so the hook can hold
   // them behind a ref without ever reading a stale session.
@@ -125,7 +218,7 @@ export default function SkiaHost() {
     [],
   );
 
-  useAutosave(session, client, handlers);
+  useAutosave(session, loaded ? client : null, handlers);
 
   return (
     <div style={{ width: BOARD_WIDTH, maxWidth: "100%" }}>
@@ -136,6 +229,11 @@ export default function SkiaHost() {
         onAddItem={onAddItem}
         onUndo={undo}
         onRedo={redo}
+        onAddImage={onAddImage}
+        uploading={upload.uploading}
+        uploadError={upload.error}
+        tileSize={session.doc.display.tileSize}
+        onTileSize={onTileSize}
       />
       {error ? (
         <pre style={{ color: "#f88", padding: 16 }}>{error}</pre>
@@ -162,9 +260,17 @@ export default function SkiaHost() {
         // viewport to measure a pointer against and no scroller to drive. It is
         // exercised on mobile, where the board sits inside a ScrollView.
         <div style={{ touchAction: "none", width: BOARD_WIDTH }}>
-          <Board doc={session.doc} width={BOARD_WIDTH} onAction={dispatch} />
+          <Board
+            doc={session.doc}
+            width={BOARD_WIDTH}
+            onAction={dispatch}
+            onTap={onTap}
+            assetIds={assetIds}
+            assetUrl={assetUrl}
+          />
         </div>
       )}
+      {/* `editing` has no sheet to open onto yet — that's the next commit. */}
     </div>
   );
 }
@@ -191,17 +297,23 @@ function newId(): string {
   return `item-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** A throwaway document so there is something to look at. Loading a real one
- *  needs a list id in the route, which is Milestone 3's shape, not this one's. */
-function sampleDoc(): TierList {
+/** A throwaway document so there is something to look at before a real list
+ *  id has been chosen (see the `listId` effect) or while disconnected. */
+function sampleDoc(id: string): TierList {
   const seeded = "2026-08-01T12:00:00.000Z";
-  let doc = createTierList({ id: "preview", now: seeded });
+  let doc = createTierList({ id, now: seeded });
+  // Rows are derived from the id by createTierList (`${id}-row-${i}`), so
+  // reference them by index rather than hard-coding a value that was only ever
+  // right for id === "preview". Getting this wrong is silent: a stale row id
+  // matches nothing, `placement/place` no-ops, and the board renders with
+  // every item stuck in the tray and no error anywhere.
+  const rows = doc.rows.map((r) => r.id);
   const labels = ["Ramen", "Udon", "Soba", "Pho", "Laksa", "Bun bo Hue"];
   labels.forEach((label, i) => {
     doc = reduce(doc, { type: "item/addText", id: `i${i}`, label }, seeded);
   });
-  doc = reduce(doc, { type: "placement/place", itemId: "i0", rowId: "preview-row-0", index: 0 }, seeded);
-  doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: "preview-row-0", index: 1 }, seeded);
-  doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: "preview-row-1", index: 0 }, seeded);
+  doc = reduce(doc, { type: "placement/place", itemId: "i0", rowId: rows[0]!, index: 0 }, seeded);
+  doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: rows[0]!, index: 1 }, seeded);
+  doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: rows[1]!, index: 0 }, seeded);
   return doc;
 }

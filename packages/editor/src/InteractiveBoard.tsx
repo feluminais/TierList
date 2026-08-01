@@ -4,6 +4,7 @@ import React, { useEffect, useMemo } from "react";
 import { View } from "react-native";
 import { TierBoard } from "./TierBoard";
 import { useBoardGesture } from "./useBoardGesture";
+import { useImageCache } from "./useImageCache";
 
 export interface InteractiveBoardProps {
   doc: TierList;
@@ -13,6 +14,17 @@ export interface InteractiveBoardProps {
   viewportHeight?: number;
   scrollY?: number;
   onAutoScroll?: (delta: number) => void;
+  /**
+   * Asset ids to keep decoded, and where to fetch one from.
+   *
+   * `useImageCache` has to run in a component that is only ever mounted after
+   * CanvasKit is on the global — see `SkiaHost`'s module-scope-import
+   * constraint — so this is the component that holds it, not the caller.
+   * Optional and defaulted below, so a consumer that has not wired uploads
+   * yet (a story, a test) does not have to supply either.
+   */
+  assetIds?: readonly string[];
+  assetUrl?: (assetId: string) => string;
   /**
    * Fired when a drag starts and again when it ends.
    *
@@ -59,6 +71,8 @@ export function InteractiveBoard({
   scrollY,
   onAutoScroll,
   onDraggingChange,
+  assetIds = EMPTY_ASSET_IDS,
+  assetUrl = emptyAssetUrl,
 }: InteractiveBoardProps) {
   const layout = useMemo(() => layoutBoard(doc, { width }), [doc, width]);
 
@@ -78,9 +92,18 @@ export function InteractiveBoard({
     onDraggingChange?.(dragging);
   }, [dragging, onDraggingChange]);
 
+  const images = useImageCache(assetIds, assetUrl);
+
   return (
     <View style={{ width, height: layout.contentHeight }} {...handlers}>
-      <TierBoard doc={doc} width={width} layout={layout} drag={drag} />
+      <TierBoard doc={doc} width={width} layout={layout} drag={drag} images={images} />
     </View>
   );
+}
+
+// Stable references so a caller that never passes these props does not force
+// `useImageCache` to re-key on a fresh array/closure every render.
+const EMPTY_ASSET_IDS: readonly string[] = [];
+function emptyAssetUrl(): string {
+  return "";
 }

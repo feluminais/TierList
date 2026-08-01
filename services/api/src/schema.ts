@@ -6,6 +6,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 /**
@@ -58,3 +59,39 @@ export const tierLists = pgTable(
 
 export type TierListRow = typeof tierLists.$inferSelect;
 export type NewTierListRow = typeof tierLists.$inferInsert;
+
+/**
+ * An uploaded image. The bytes live in an ObjectStore under `storageKey`; this
+ * row is the metadata and the ownership record.
+ *
+ * `contentType`, `width` and `height` are what `sniffImage` read out of the
+ * bytes themselves — never what the client declared. Storing them means a
+ * consumer never has to re-parse an image to lay it out.
+ *
+ * `checksum` is the SHA-256 of the original bytes. It exists so re-uploading an
+ * image the owner already has returns the existing asset instead of storing a
+ * second copy, which is an ordinary thing to do when building a tier list.
+ * Scoped per owner: two owners uploading identical bytes get two rows and two
+ * copies, so neither can affect the other's asset.
+ */
+export const assets = pgTable(
+  "assets",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull(),
+    storageKey: text("storage_key").notNull(),
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    checksum: text("checksum").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index("assets_owner_idx").on(t.ownerId),
+    uniqueIndex("assets_owner_checksum_idx").on(t.ownerId, t.checksum),
+  ],
+);
+
+export type AssetRow = typeof assets.$inferSelect;
+export type NewAssetRow = typeof assets.$inferInsert;

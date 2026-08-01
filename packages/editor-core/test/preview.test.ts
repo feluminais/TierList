@@ -166,6 +166,47 @@ describe("insertionCaretRect", () => {
     expect(caret.y).toBeGreaterThan(tiles[1]!.rect.y);
   });
 
+  it("stays inside its location when the gap is narrower than the caret", () => {
+    // Compact density's gap is 2px, and the caret is 4px wide, so there is not
+    // enough room between the end of a full line and the edge of the location
+    // to draw one. 710px is chosen so the row's tiles area (710 - 120 label)
+    // is exactly gap + 6 * (tile + gap): the line fills to within one gap of
+    // the right edge, which at padding 0 is the board edge.
+    let doc = reduce(
+      populated(),
+      { type: "display/set", patch: { density: "compact" } },
+      NOW,
+    );
+    for (let i = 4; i < 8; i += 1) {
+      doc = reduce(doc, { type: "item/addText", id: `i${i}`, label: `i${i}` }, NOW);
+    }
+    doc = reduce(doc, { type: "placement/place", itemId: "i3", rowId: S, index: 3 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i4", rowId: S, index: 4 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i5", rowId: S, index: 5 }, NOW);
+
+    const tight = layoutBoard(doc, { width: 710 });
+    const row = tight.rows[0]!;
+    const last = row.tiles[5]!.rect;
+
+    // Vacuous unless the line really is full to within less than a caret of
+    // the edge -- on a row with room to spare there is nothing to clamp.
+    expect(row.tiles).toHaveLength(6);
+    expect(new Set(row.tiles.map((t) => t.rect.y)).size).toBe(1);
+    const slack = row.tilesRect.x + row.tilesRect.width - (last.x + last.width);
+    expect(slack).toBeLessThan(4);
+
+    const past = insertionCaretRect(tight, { rowId: S, index: 6 })!;
+    expect(past.x + past.width).toBeLessThanOrEqual(
+      row.tilesRect.x + row.tilesRect.width,
+    );
+
+    // The same shortfall at the other end: the first tile sits one 2px gap in
+    // from the left, so a caret drawn to its left starts outside the tray.
+    const tray = insertionCaretRect(tight, { rowId: null, index: 0 })!;
+    expect(tight.tray.tiles.length).toBeGreaterThan(0);
+    expect(tray.x).toBeGreaterThanOrEqual(tight.tray.tilesRect.x);
+  });
+
   it("returns null for a row that is not in the layout", () => {
     expect(insertionCaretRect(LAYOUT, { rowId: "nope", index: 0 })).toBeNull();
   });

@@ -46,6 +46,26 @@ function locationOf(layout: BoardLayout, rowId: string | null): Location | null 
 }
 
 /**
+ * Keep a caret inside the location it marks.
+ *
+ * The caret is `CARET_WIDTH` wide, but the space it is drawn into is a layout
+ * gap — and at compact density the gap is 2, narrower than the caret. A
+ * past-the-end caret on a full line then ends 2px beyond the location's right
+ * edge, which on an unpadded board is the board edge, so it clips. An index-0
+ * caret in an unpadded tray starts 2px to the left of it for the same reason.
+ *
+ * Overlapping the neighbouring tile by those 2px is the better failure: a
+ * caret is an insertion marker and belongs inside the thing it marks.
+ *
+ * The left edge is applied last so that on a location narrower than the caret
+ * itself the caret starts at the area's origin and runs over, rather than
+ * starting outside it.
+ */
+function clampToArea(x: number, area: Rect): number {
+  return Math.max(area.x, Math.min(x, area.x + area.width - CARET_WIDTH));
+}
+
+/**
  * Where to draw the insertion bar for a drop target, or null when there is no
  * target or the target names a row the layout does not have.
  *
@@ -65,7 +85,7 @@ export function insertionCaretRect(
   const at = location.tiles[target.index];
   if (at) {
     return {
-      x: at.rect.x - CARET_WIDTH,
+      x: clampToArea(at.rect.x - CARET_WIDTH, location.area),
       y: at.rect.y,
       width: CARET_WIDTH,
       height: at.rect.height,
@@ -75,7 +95,7 @@ export function insertionCaretRect(
   const last = location.tiles[location.tiles.length - 1];
   if (last) {
     return {
-      x: last.rect.x + last.rect.width,
+      x: clampToArea(last.rect.x + last.rect.width, location.area),
       y: last.rect.y,
       width: CARET_WIDTH,
       height: last.rect.height,
@@ -85,7 +105,7 @@ export function insertionCaretRect(
   // An empty location has no tile to anchor to, so the caret spans the area
   // it would fill, inset a little so it does not sit flush against the edge.
   return {
-    x: location.area.x + CARET_WIDTH,
+    x: clampToArea(location.area.x + CARET_WIDTH, location.area),
     y: location.area.y + CARET_WIDTH,
     width: CARET_WIDTH,
     height: Math.max(CARET_WIDTH, location.area.height - CARET_WIDTH * 2),

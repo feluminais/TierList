@@ -26,8 +26,26 @@ export interface ObjectStore {
  * outright (never allowed inside a segment) because on Windows `path.join`
  * treats them as separators, which would let a key smuggle extra path
  * segments straight past this regex.
+ *
+ * Lowercase only, uppercase rejected outright. This was not a theoretical
+ * worry: `put("Abc", …)` then `get("abc")` returns null on the memory
+ * adapter (a case-sensitive `Map`) but returns the object on the file
+ * adapter, observed directly on Windows/NTFS —
+ *
+ *   memory  put("Abc") -> get("Abc")=FOUND  get("abc")=null
+ *   file    put("Abc") -> get("Abc")=FOUND  get("abc")=FOUND
+ *
+ * — because NTFS folds case and a case-sensitive Map does not. Folding case
+ * inside each adapter instead would fix it twice, separately, which is
+ * exactly the kind of thing that stays in sync only by coincidence.
+ * Rejecting uppercase at the boundary means the two adapters can only ever
+ * agree, and it costs nothing today: every key this service builds is
+ * `assets/${randomUUID()}`, and `randomUUID()` emits lowercase hex. A future
+ * key scheme that wants mixed case (base64url, say) will fail loudly here
+ * instead of diverging silently between dev and production — read that as a
+ * prompt to reconsider this constraint, not a bug to route around.
  */
-const SAFE_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]*(\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
+const SAFE_KEY = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*$/;
 
 function assertSafeKey(key: string): void {
   if (!SAFE_KEY.test(key)) throw new Error(`unsafe object key: ${key}`);
@@ -68,6 +86,12 @@ export function createFileStore(root: string): ObjectStore {
       const target = resolve(key, ".bin");
       await mkdir(path.dirname(target), { recursive: true });
       await writeFile(target, bytes);
+      // Two separate writes, not one atomic operation: a process death between
+      // them leaves `.bin` on disk with no matching `.type`. `get` then hits
+      // ENOENT reading the sidecar and reports a miss — bytes exist but read
+      // back as "never written". Acceptable: the contract only promises
+      // behaviour for a *completed* put, and this window is never observable
+      // from a caller that awaits put() before ever calling get().
       await writeFile(resolve(key, ".type"), contentType, "utf8");
     },
 

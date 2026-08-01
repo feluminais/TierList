@@ -80,6 +80,23 @@ describe.each([
     ).rejects.toThrow(/key/i);
     await expect(store.get("../escape")).rejects.toThrow(/key/i);
   });
+
+  /**
+   * Uppercase is rejected outright rather than folded, because a case-fold
+   * inside each adapter would only agree by coincidence. Without this
+   * constraint, `put("Abc", …)` then `get("abc")` finds nothing on the
+   * memory adapter (a case-sensitive Map) but finds the object on the file
+   * adapter on a case-insensitive filesystem such as Windows/NTFS — a
+   * genuine divergence, observed directly, not hypothesised. See the
+   * SAFE_KEY comment in src/store.ts for the reproduction.
+   */
+  it("refuses an uppercase key identically on put and get", async () => {
+    const store = await make();
+    await expect(
+      store.put("Abc", new Uint8Array([1]), "image/png"),
+    ).rejects.toThrow(/key/i);
+    await expect(store.get("Abc")).rejects.toThrow(/key/i);
+  });
 });
 
 /**

@@ -70,8 +70,18 @@ export interface Placement {
 export interface DisplaySettings {
   tileSize: number; // px at 1x
   tileAspect: TileAspect;
-  labelWidth: number; // px
+  /** Width of a row's label column, in px. Set it to 0 to collapse it. */
+  labelWidth: number;
   density: Density;
+  /**
+   * Whether an item's own label is drawn on its tile.
+   *
+   * Deliberately *not* about the row label column: `labelWidth: 0` already
+   * collapses that, so a second flag meaning the same thing would be
+   * redundant. Because the label is drawn on the tile rather than beneath it,
+   * this changes no geometry — `layoutBoard` correctly ignores it, and the
+   * renderer is the only thing that reads it.
+   */
   showLabels: boolean;
 }
 

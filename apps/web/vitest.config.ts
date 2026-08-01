@@ -12,5 +12,8 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     environment: "jsdom",
+    // See test/setup.ts: jsdom's Blob/File cannot read their own bytes, which
+    // useAssetUpload's tests need.
+    setupFiles: ["./test/setup.ts"],
   },
 });

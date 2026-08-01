@@ -8,6 +8,9 @@
       "expo-router"
     ],
     "name": "mobile",
-    "slug": "mobile"
+    "slug": "mobile",
+    "android": {
+      "package": "com.anonymous.mobile"
+    }
   }
 }

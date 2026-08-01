@@ -2,6 +2,25 @@ packages:
   - "apps/*"
   - "packages/*"
   - "services/*"
+
+# Required by the Android native build, not a preference.
+#
+# pnpm's default isolated layout stores packages under paths like
+#   node_modules/.pnpm/@shopify+react-native-skia@_bc3feb.../node_modules/...
+# CMake's dependency tracking cannot cope with the `+` and `@` characters pnpm
+# uses to encode scoped names, so it regenerates build.ninja forever and ninja
+# aborts with "manifest 'build.ninja' still dirty after 100 tries". This hit
+# every native module (Skia, react-native-screens, ...), not just one.
+#
+# Hoisting flattens node_modules to an npm-style layout, removing those
+# characters from the paths CMake sees. The Expo/Skia template ships this same
+# setting in its own generated workspace file — the template author hit this too.
+#
+# Cost: weaker protection against phantom dependencies, since hoisting makes
+# undeclared packages resolvable. The `overrides` block below is what keeps
+# versions single, so that protection does not depend on the linker.
+nodeLinker: hoisted
+
 overrides:
   # Expo SDK 57 pins these exactly, and a tested matrix is the whole point of
   # an SDK release. Next.js accepts any React 19.x and apps/web never runs

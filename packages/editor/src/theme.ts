@@ -12,6 +12,15 @@ export const TILE_TEXT_FILL = "#242830";
 export const BOARD_LINE = "#0b0d10";
 
 /**
+ * The bar showing where a dragged item would land. Deliberately not one of the
+ * tile or row fills: it has to read as an annotation on the board rather than
+ * as another tile, on top of whatever colour the user gave the tier under it.
+ */
+export const CARET = "#4ade80";
+/** Border around the tile following the finger, so it reads as lifted. */
+export const PREVIEW_BORDER = "#4ade80";
+
+/**
  * Image tiles render as a pending swatch until Milestone 3 builds the image
  * pipeline. Object storage is deferred, so an `assetId` currently names
  * nothing that can be fetched — a visible placeholder is honest, whereas an

@@ -44,6 +44,18 @@ describe("sniffImage — PNG", () => {
     expect(sniffImage(pngBytes(10, 0))).toBeNull();
   });
 
+  // MAX_DIMENSION (65535) is a sanity ceiling, not a product limit — a real
+  // image can legitimately be exactly this large, so the boundary itself must
+  // still be accepted; only the first value past it should be rejected.
+  it("accepts the maximum allowed dimension and rejects one past it", () => {
+    expect(sniffImage(pngBytes(65535, 1))).toEqual({
+      contentType: "image/png",
+      width: 65535,
+      height: 1,
+    });
+    expect(sniffImage(pngBytes(65536, 1))).toBeNull();
+  });
+
   it("rejects empty input", () => {
     expect(sniffImage(new Uint8Array(0))).toBeNull();
   });
@@ -107,6 +119,17 @@ describe("sniffImage — JPEG", () => {
     const bytes = jpegBytes(8, 8);
     bytes[4] = 0x00;
     bytes[5] = 0x01; // length 1 — cannot even hold the length field
+    expect(sniffImage(bytes)).toBeNull();
+  });
+
+  // Distinct from the case above: this one places the too-short length on the
+  // SOF segment itself, with real dimension bytes sitting right after it. A
+  // check that merely requires length >= 1 would let this through and read a
+  // width/height out of what is actually the next segment's data.
+  it("rejects a SOF segment whose declared length cannot hold a frame header", () => {
+    const bytes = jpegBytes(64, 32);
+    bytes[10] = 0x00;
+    bytes[11] = 0x01; // SOF length 1 — too short to hold even the length field
     expect(sniffImage(bytes)).toBeNull();
   });
 

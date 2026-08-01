@@ -1,3 +1,6 @@
+import type { DragState } from "./drag";
+import type { Point } from "./geometry";
+
 /** How near an edge the pointer must come before the board starts moving. */
 export const AUTOSCROLL_EDGE_PX = 72;
 
@@ -41,4 +44,51 @@ export function autoScrollDelta(
   }
 
   return 0;
+}
+
+/**
+ * Where the pointer now is **in content coordinates** after the board has
+ * scrolled beneath a finger that did not move, or null when there is nothing
+ * to correct.
+ *
+ * `DragState.pointer` is in content coordinates, and a stationary finger
+ * produces no touch events — so while autoscroll runs, nothing updates it. The
+ * caret and the preview would stay pinned to a content position the board has
+ * since slid out from under, drifting further for as long as the autoscroll
+ * lasts and snapping back only on the next real move. Feeding this point back
+ * in as a synthetic `move` is what keeps them under the finger, and re-targets
+ * the drop against the rows that have scrolled into view.
+ *
+ * The finger has not moved in *viewport* terms, so the content point beneath it
+ * moves by exactly as far as the content did.
+ *
+ * That distance must be the **observed** change in the scroll offset and never
+ * the delta that was requested: `autoScrollDelta` deliberately does not clamp to
+ * the content bounds, so at the end of a list the scroller applies a requested
+ * delta as zero. Adding the request here would walk the preview off the end of
+ * the board while the board itself stood still.
+ *
+ * Because the correction is exactly the observed movement, the viewport
+ * position it implies — `pointer.y - scrollY` — is unchanged by it. That is what
+ * stops the autoscroll loop it feeds from running away: the next frame reads the
+ * same viewport position and asks for the same delta, so the board glides at a
+ * constant speed instead of accelerating.
+ */
+export function pointerAfterScroll(
+  state: DragState,
+  previousScrollY: number,
+  scrollY: number,
+): Point | null {
+  if (state.phase !== "dragging") return null;
+
+  const moved = scrollY - previousScrollY;
+
+  // `moved === 0` is the ordinary case at the end of a list, and returning null
+  // rather than an equal point lets the caller skip the event entirely. The
+  // finiteness guard is not decoration: `pointer` accumulates, so one NaN offset
+  // would poison it for the rest of the gesture and every subsequent drop target
+  // would silently be null.
+  if (!Number.isFinite(moved) || moved === 0) return null;
+
+  return { x: state.pointer.x, y: state.pointer.y + moved };
 }

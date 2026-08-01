@@ -3,7 +3,9 @@ import {
   AUTOSCROLL_EDGE_PX,
   AUTOSCROLL_MAX_PX_PER_FRAME,
   autoScrollDelta,
+  pointerAfterScroll,
 } from "../src/autoscroll";
+import { idleDrag, type DragState } from "../src/drag";
 
 const VIEWPORT = 800;
 
@@ -70,5 +72,80 @@ describe("autoScrollDelta", () => {
   it("returns 0 for a degenerate viewport rather than dividing by zero", () => {
     expect(autoScrollDelta(10, 0)).toBe(0);
     expect(Number.isFinite(autoScrollDelta(10, 0))).toBe(true);
+  });
+});
+
+/** A drag in flight, with the pointer 500px down the *content*. */
+function dragging(pointerY = 500): Extract<DragState, { phase: "dragging" }> {
+  return {
+    phase: "dragging",
+    itemId: "i1",
+    from: { rowId: "row-0", index: 1 },
+    grab: { x: 12, y: 8 },
+    pointer: { x: 300, y: pointerY },
+    target: { rowId: "row-0", index: 1 },
+  };
+}
+
+describe("pointerAfterScroll", () => {
+  it("has nothing to correct when no drag is in flight", () => {
+    expect(pointerAfterScroll(idleDrag(), 0, 40)).toBeNull();
+  });
+
+  it("has nothing to correct while a press is only pending", () => {
+    const pending: DragState = {
+      phase: "pending",
+      itemId: "i1",
+      origin: { point: { x: 300, y: 500 }, time: 0 },
+      pointer: { x: 300, y: 500 },
+    };
+    expect(pointerAfterScroll(pending, 0, 40)).toBeNull();
+  });
+
+  it("has nothing to correct when the board did not move", () => {
+    // The end-of-list case: `scrollTo` was asked for 14px and applied zero.
+    expect(pointerAfterScroll(dragging(), 120, 120)).toBeNull();
+  });
+
+  it("shifts the content pointer by exactly how far the content moved", () => {
+    expect(pointerAfterScroll(dragging(500), 100, 114)).toEqual({ x: 300, y: 514 });
+  });
+
+  it("shifts back when the board scrolls the other way", () => {
+    expect(pointerAfterScroll(dragging(500), 100, 88)).toEqual({ x: 300, y: 488 });
+  });
+
+  it("leaves x alone, because only the vertical offset changed", () => {
+    expect(pointerAfterScroll(dragging(), 0, 400)!.x).toBe(300);
+  });
+
+  it("leaves the pointer's viewport position untouched — the fixed point", () => {
+    // This is what stops the loop running away. The frame loop reads
+    // `pointer.y - scrollY` to decide the next delta; if a correction changed
+    // that, each frame would ask for a larger scroll than the last.
+    const state = dragging(500);
+    const before = state.pointer.y - 100;
+    const after = pointerAfterScroll(state, 100, 114)!.y - 114;
+    expect(after).toBe(before);
+  });
+
+  it("survives a whole autoscroll run without accumulating error", () => {
+    let state = dragging(500);
+    let scrollY = 0;
+    for (let frame = 0; frame < 60; frame += 1) {
+      const next = scrollY + 14;
+      const point = pointerAfterScroll(state, scrollY, next)!;
+      state = { ...state, pointer: point };
+      scrollY = next;
+    }
+    // 60 frames of scrolling, and the finger is still over the same pixel of
+    // the viewport it started on.
+    expect(state.pointer.y - scrollY).toBe(500);
+  });
+
+  it("refuses a non-finite offset rather than poisoning the pointer", () => {
+    expect(pointerAfterScroll(dragging(), Number.NaN, 40)).toBeNull();
+    expect(pointerAfterScroll(dragging(), 0, Number.NaN)).toBeNull();
+    expect(pointerAfterScroll(dragging(), 0, Number.POSITIVE_INFINITY)).toBeNull();
   });
 });

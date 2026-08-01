@@ -4,12 +4,15 @@ export const BOARD_BACKGROUND = "#14161a";
 export const ROW_LABEL_TEXT = "#14161a";
 export const TILE_TEXT = "#e6e8ec";
 
-/** A tile whose image has not been uploaded yet. */
-export const TILE_PENDING = "#3a3f47";
 /** A text tile. */
 export const TILE_TEXT_FILL = "#242830";
 /** Drawn between tiles and rows so adjacent bands stay distinguishable. */
 export const BOARD_LINE = "#0b0d10";
+
+/** An image tile whose bytes are still arriving. */
+export const TILE_LOADING = "#3a3f47";
+/** An image tile whose bytes could not be fetched or decoded. */
+export const TILE_FAILED = "#4a2f33";
 
 /**
  * The bar showing where a dragged item would land. Deliberately not one of the
@@ -21,13 +24,19 @@ export const CARET = "#4ade80";
 export const PREVIEW_BORDER = "#4ade80";
 
 /**
- * Image tiles render as a pending swatch until Milestone 3 builds the image
- * pipeline. Object storage is deferred, so an `assetId` currently names
- * nothing that can be fetched — a visible placeholder is honest, whereas an
- * empty tile reads as a rendering bug.
+ * The fill *behind* a tile.
+ *
+ * For a ready image this is what shows through where the image does not cover
+ * — which the aspect lock means is nowhere, but a decoded image can still be
+ * one pixel short of its declared size. For loading and failed tiles it is the
+ * whole tile, and the two are deliberately different colours: "not here yet"
+ * and "not coming" are different things to tell someone, and a single grey
+ * swatch for both is how a broken upload gets mistaken for a slow one.
  */
-export function tileFill(item: Item): string {
-  return item.kind === "image" ? TILE_PENDING : TILE_TEXT_FILL;
+export function tileFill(item: Item, status?: "loading" | "ready" | "failed"): string {
+  if (item.kind !== "image") return TILE_TEXT_FILL;
+  if (status === "failed") return TILE_FAILED;
+  return TILE_LOADING;
 }
 
 /**

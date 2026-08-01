@@ -4,7 +4,8 @@ import {
   rowFontSize,
   tileFill,
   tileFontSize,
-  TILE_PENDING,
+  TILE_FAILED,
+  TILE_LOADING,
   TILE_TEXT_FILL,
   truncate,
 } from "../src/theme";
@@ -20,13 +21,40 @@ function item(kind: Item["kind"]): Item {
 }
 
 describe("tileFill", () => {
-  it("marks an image tile as pending, because object storage does not exist yet", () => {
-    expect(tileFill(item("image"))).toBe(TILE_PENDING);
+  it("shows the loading colour for an image tile with no status yet", () => {
+    // Optional `status` covers the drag-preview call site, which passes only
+    // the item — a lifted tile shows its loading colour for the span of a drag.
+    expect(tileFill(item("image"))).toBe(TILE_LOADING);
+  });
+
+  it("shows the loading colour while an image tile's bytes are still arriving", () => {
+    expect(tileFill(item("image"), "loading")).toBe(TILE_LOADING);
+  });
+
+  it("shows the failed colour when an image tile's bytes could not be fetched or decoded", () => {
+    expect(tileFill(item("image"), "failed")).toBe(TILE_FAILED);
+  });
+
+  // "Not here yet" and "not coming" are different things to tell someone, so
+  // loading and failed must not share a colour.
+  it("distinguishes loading from failed", () => {
+    expect(tileFill(item("image"), "loading")).not.toBe(tileFill(item("image"), "failed"));
+  });
+
+  it("ignores status for a ready image tile, falling back to the loading colour behind it", () => {
+    // `ready` covers the whole tile once an image is drawn on top; the fill
+    // only shows through slivers a decoded image falls short of, so it need
+    // not be a distinct colour of its own.
+    expect(tileFill(item("image"), "ready")).toBe(TILE_LOADING);
   });
 
   it("fills a text tile differently, so the two are distinguishable", () => {
     expect(tileFill(item("text"))).toBe(TILE_TEXT_FILL);
     expect(tileFill(item("text"))).not.toBe(tileFill(item("image")));
+  });
+
+  it("ignores status entirely for a text tile", () => {
+    expect(tileFill(item("text"), "failed")).toBe(TILE_TEXT_FILL);
   });
 });
 

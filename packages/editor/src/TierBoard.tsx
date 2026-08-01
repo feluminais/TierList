@@ -1,13 +1,28 @@
-import type { TierList } from "@tl/core";
+import type { Item, TierList } from "@tl/core";
 import {
   dragPreviewRect,
+  imageDrawRect,
+  imagePlacement,
   insertionCaretRect,
   layoutBoard,
+  toTilePoint,
   type BoardLayout,
   type DragState,
+  type Rect as GeometryRect,
   type TileBox,
 } from "@tl/editor-core";
-import { Canvas, Fill, Group, Rect, Text } from "@shopify/react-native-skia";
+import {
+  Canvas,
+  Fill,
+  Group,
+  Image,
+  Path,
+  Rect,
+  Skia,
+  Text,
+  rect,
+  type SkImage,
+} from "@shopify/react-native-skia";
 import React, { useMemo } from "react";
 import {
   BOARD_BACKGROUND,
@@ -22,6 +37,7 @@ import {
   truncate,
 } from "./theme";
 import { useBoardFont } from "./useBoardFont";
+import type { ImageCache } from "./useImageCache";
 
 export interface TierBoardProps {
   doc: TierList;
@@ -31,6 +47,12 @@ export interface TierBoardProps {
   layout?: BoardLayout;
   /** The gesture in flight, if any. Drawn on top of an unchanged board. */
   drag?: DragState;
+  /**
+   * Decoded images by `assetId`. Optional: the board renders perfectly well
+   * without it, showing every image tile in its loading state, which is what
+   * a consumer that has not wired uploads yet should see.
+   */
+  images?: ImageCache;
 }
 
 /**
@@ -43,7 +65,7 @@ export interface TierBoardProps {
  * where the caret and the floating tile go is `@tl/editor-core`'s arithmetic,
  * not this file's. `InteractiveBoard` is what turns touches into that state.
  */
-export function TierBoard({ doc, width, layout, drag }: TierBoardProps) {
+export function TierBoard({ doc, width, layout, drag, images }: TierBoardProps) {
   const board = useMemo(
     () => layout ?? layoutBoard(doc, { width }),
     [layout, doc, width],
@@ -95,6 +117,56 @@ export function TierBoard({ doc, width, layout, drag }: TierBoardProps) {
   );
   const draggedItem = drag?.phase === "dragging" ? itemsById.get(drag.itemId) : undefined;
 
+  /**
+   * An image and its strokes, both clipped to the tile.
+   *
+   * The clip is what makes a crop a crop: the whole image is drawn, scaled and
+   * offset by `imageDrawRect` so the cropped region covers the tile, and
+   * everything outside is discarded here. Strokes are clipped by the same group
+   * because a stroke drawn before a tighter crop legitimately extends past it.
+   */
+  const drawTileImage = (item: Item, image: SkImage, dest: GeometryRect) => {
+    const size = { width: image.width(), height: image.height() };
+    const placement = imagePlacement(size, item.edit, dest);
+    const draw = imageDrawRect(placement, size);
+
+    return (
+      <Group clip={rect(dest.x, dest.y, dest.width, dest.height)}>
+        <Image
+          image={image}
+          x={draw.x}
+          y={draw.y}
+          width={draw.width}
+          height={draw.height}
+          fit="fill"
+        />
+        {item.edit.strokes.map((stroke) => {
+          const path = Skia.Path.Make();
+          for (let p = 0; p + 1 < stroke.points.length; p += 2) {
+            const point = toTilePoint(
+              { x: stroke.points[p]!, y: stroke.points[p + 1]! },
+              dest,
+              item.edit.crop,
+            );
+            if (p === 0) path.moveTo(point.x, point.y);
+            else path.lineTo(point.x, point.y);
+          }
+          return (
+            <Path
+              key={stroke.id}
+              path={path}
+              color={stroke.color}
+              style="stroke"
+              strokeWidth={stroke.width}
+              strokeCap="round"
+              strokeJoin="round"
+            />
+          );
+        })}
+      </Group>
+    );
+  };
+
   // Row tiles and tray tiles are drawn identically; only their source list
   // differs. Keeping one helper means a label change cannot land in one place
   // and not the other.
@@ -104,6 +176,10 @@ export function TierBoard({ doc, width, layout, drag }: TierBoardProps) {
     // passing through the reducer — see the migrate() validation gap in
     // STATE.md. Skip rather than draw a hole.
     if (!item) return null;
+
+    const entry = item.assetId ? images?.get(item.assetId) : undefined;
+    const ready = entry?.status === "ready" ? entry.image : null;
+
     return (
       // Position is part of the key because migrate() performs no structural
       // validation, so the same item can appear twice in one location. A bare
@@ -114,8 +190,9 @@ export function TierBoard({ doc, width, layout, drag }: TierBoardProps) {
           y={tile.rect.y}
           width={tile.rect.width}
           height={tile.rect.height}
-          color={tileFill(item)}
+          color={tileFill(item, entry?.status)}
         />
+        {ready ? drawTileImage(item, ready, tile.rect) : null}
         {tileFont && doc.display.showLabels ? (
           <Text
             x={tile.rect.x + 4}

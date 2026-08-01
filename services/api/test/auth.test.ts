@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app";
 import { createRepository } from "../src/repository";
+import { createMemoryStore } from "../src/store";
 import { createTestDb, type TestDb } from "./helpers/pglite";
 
 let ctx: TestDb;
@@ -8,7 +9,7 @@ let app: ReturnType<typeof buildApp>;
 
 beforeEach(async () => {
   ctx = await createTestDb();
-  app = buildApp({ repository: createRepository(ctx.db) });
+  app = buildApp({ repository: createRepository(ctx.db), store: createMemoryStore() });
 });
 
 afterEach(async () => {

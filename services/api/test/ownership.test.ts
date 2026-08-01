@@ -2,6 +2,7 @@ import { createTierList, reduce } from "@tl/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app";
 import { createRepository } from "../src/repository";
+import { createMemoryStore } from "../src/store";
 import { createTestDb, type TestDb } from "./helpers/pglite";
 
 const NOW = "2026-08-01T12:00:00.000Z";
@@ -11,7 +12,7 @@ let app: ReturnType<typeof buildApp>;
 
 beforeEach(async () => {
   ctx = await createTestDb();
-  app = buildApp({ repository: createRepository(ctx.db) });
+  app = buildApp({ repository: createRepository(ctx.db), store: createMemoryStore() });
 });
 
 afterEach(async () => {

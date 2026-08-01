@@ -1,5 +1,5 @@
 import { migrate, type TierList } from "@tl/core";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { deviceTokens, tierLists, type NewTierListRow } from "./schema";
 
@@ -25,19 +25,33 @@ export interface Repository {
    * a way to clobber a document without presenting a revision, which is
    * exactly what `update` exists to prevent.
    */
-  create: (doc: TierList) => Promise<boolean>;
+  create: (doc: TierList, ownerId: string) => Promise<boolean>;
   load: (id: string) => Promise<TierList | null>;
-  update: (doc: TierList, expectedRevision: number) => Promise<void>;
+  update: (
+    doc: TierList,
+    expectedRevision: number,
+    ownerId: string,
+  ) => Promise<void>;
+  /**
+   * The owner of a stored document, or null when the id is unknown. Exists so a
+   * route can tell "not yours" from "stale revision" *before* attempting an
+   * update — see the comment on `update` for why those must not collapse.
+   */
+  findOwner: (id: string) => Promise<string | null>;
+  listByOwner: (
+    ownerId: string,
+  ) => Promise<{ id: string; title: string; updatedAt: Date }[]>;
   /** Stores a minted token by its hash. The raw token never reaches here. */
   createToken: (id: string, tokenHash: string, now: Date) => Promise<void>;
   findTokenId: (tokenHash: string) => Promise<string | null>;
 }
 
 /** The single place projected columns are derived from the document. */
-function toRow(doc: TierList): NewTierListRow {
+function toRow(doc: TierList, ownerId: string): NewTierListRow {
   return {
     id: doc.id,
     authorId: doc.authorId ?? null,
+    ownerId,
     title: doc.title,
     categoryId: doc.categoryId,
     templateId: doc.templateId ?? null,
@@ -63,10 +77,10 @@ export class RevisionConflictError extends Error {
 
 export function createRepository(db: Db): Repository {
   return {
-    async create(doc) {
+    async create(doc, ownerId) {
       const inserted = await db
         .insert(tierLists)
-        .values(toRow(doc))
+        .values(toRow(doc, ownerId))
         .onConflictDoNothing({ target: tierLists.id })
         .returning({ id: tierLists.id });
 
@@ -87,12 +101,17 @@ export function createRepository(db: Db): Repository {
       return migrate(row.document);
     },
 
-    // The conflict and the missing-row case deliberately produce the same
-    // error: from the client's perspective both mean "your update did not
-    // apply, re-read and retry", and distinguishing them would leak whether
-    // an id exists.
-    async update(doc, expectedRevision) {
-      const row = toRow(doc);
+    /**
+     * Three different failures all match zero rows here — unknown id, stale
+     * revision, wrong owner — and all raise the same RevisionConflictError.
+     * That is fine at this layer but *not* at the HTTP layer: 409 means
+     * "re-read and retry" and 404 means "stop", and telling an owner with a
+     * genuine conflict to stop loses their write silently. Routes therefore
+     * establish ownership with `findOwner` before calling this, so a conflict
+     * reaching them can only mean a stale revision.
+     */
+    async update(doc, expectedRevision, ownerId) {
+      const row = toRow(doc, ownerId);
       const updated = await db
         .update(tierLists)
         .set(row)
@@ -100,6 +119,7 @@ export function createRepository(db: Db): Repository {
           and(
             eq(tierLists.id, doc.id),
             eq(tierLists.revision, expectedRevision),
+            eq(tierLists.ownerId, ownerId),
           ),
         )
         .returning({ id: tierLists.id });
@@ -107,6 +127,28 @@ export function createRepository(db: Db): Repository {
       if (updated.length === 0) {
         throw new RevisionConflictError(doc.id, expectedRevision);
       }
+    },
+
+    async findOwner(id) {
+      const rows = await db
+        .select({ ownerId: tierLists.ownerId })
+        .from(tierLists)
+        .where(eq(tierLists.id, id))
+        .limit(1);
+
+      return rows[0]?.ownerId ?? null;
+    },
+
+    async listByOwner(ownerId) {
+      return db
+        .select({
+          id: tierLists.id,
+          title: tierLists.title,
+          updatedAt: tierLists.updatedAt,
+        })
+        .from(tierLists)
+        .where(eq(tierLists.ownerId, ownerId))
+        .orderBy(desc(tierLists.updatedAt));
     },
 
     async createToken(id, tokenHash, now) {

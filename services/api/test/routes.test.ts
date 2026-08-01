@@ -8,20 +8,33 @@ const NOW = "2026-08-01T12:00:00.000Z";
 
 let ctx: TestDb;
 let app: ReturnType<typeof buildApp>;
+// Writes are scoped to a device token; these tests are about the routes
+// themselves, so they all speak as one owner. Ownership is exercised in
+// ownership.test.ts.
+let token: string;
 
 beforeEach(async () => {
   ctx = await createTestDb();
   app = buildApp({ repository: createRepository(ctx.db) });
+  const minted = await app.request("/tokens", { method: "POST" });
+  token = ((await minted.json()) as { token: string }).token;
 });
 
 afterEach(async () => {
   await ctx.close();
 });
 
+function headers() {
+  return {
+    "content-type": "application/json",
+    authorization: `Bearer ${token}`,
+  };
+}
+
 async function put(doc: ReturnType<typeof createTierList>) {
   return app.request(`/lists/${doc.id}`, {
     method: "PUT",
-    headers: { "content-type": "application/json" },
+    headers: headers(),
     body: JSON.stringify({ document: doc }),
   });
 }
@@ -59,7 +72,7 @@ describe("PUT /lists/:id", () => {
   it("rejects a body that is not a tier list", async () => {
     const res = await app.request("/lists/list-1", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: headers(),
       body: JSON.stringify({ document: { nope: true } }),
     });
     expect(res.status).toBe(400);
@@ -69,7 +82,7 @@ describe("PUT /lists/:id", () => {
     const doc = createTierList({ id: "other", now: NOW });
     const res = await app.request("/lists/list-1", {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: headers(),
       body: JSON.stringify({ document: doc }),
     });
     expect(res.status).toBe(400);
@@ -104,7 +117,7 @@ describe("PATCH /lists/:id", () => {
     );
     const res = await app.request("/lists/list-1", {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
+      headers: headers(),
       body: JSON.stringify({ document: next, expectedRevision: 0 }),
     });
 
@@ -119,14 +132,14 @@ describe("PATCH /lists/:id", () => {
     const a = reduce(doc, { type: "meta/set", patch: { title: "A" } }, NOW);
     await app.request("/lists/list-1", {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
+      headers: headers(),
       body: JSON.stringify({ document: a, expectedRevision: 0 }),
     });
 
     const b = reduce(doc, { type: "meta/set", patch: { title: "B" } }, NOW);
     const res = await app.request("/lists/list-1", {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
+      headers: headers(),
       body: JSON.stringify({ document: b, expectedRevision: 0 }),
     });
 

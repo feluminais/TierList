@@ -66,7 +66,62 @@ function sniffPng(bytes: Uint8Array): ImageInfo | null {
   return validate("image/png", u32be(bytes, 16), u32be(bytes, 20));
 }
 
+function u16be(bytes: Uint8Array, offset: number): number | null {
+  if (offset + 2 > bytes.length) return null;
+  return (bytes[offset]! << 8) + bytes[offset + 1]!;
+}
+
+/**
+ * Markers in 0xC0..0xCF are frame headers *except* three: DHT (0xC4), JPG
+ * (0xC8) and DAC (0xCC). Those carry entirely different payloads, so reading a
+ * size out of one yields a confident wrong answer rather than a failure — which
+ * is why they are excluded by name rather than by range.
+ */
+function isFrameMarker(marker: number): boolean {
+  if (marker < 0xc0 || marker > 0xcf) return false;
+  return marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+}
+
+function sniffJpeg(bytes: Uint8Array): ImageInfo | null {
+  let offset = 2; // past SOI
+
+  while (offset < bytes.length) {
+    // A marker is 0xFF followed by a non-0xFF, non-zero byte. Any number of
+    // 0xFF fill bytes may precede it, which is legal and does occur.
+    if (bytes[offset] !== 0xff) return null;
+    while (offset < bytes.length && bytes[offset] === 0xff) offset++;
+
+    const marker = bytes[offset];
+    if (marker === undefined) return null;
+    offset++;
+
+    // Standalone markers carry no payload, so there is no length to skip.
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) continue;
+
+    const length = u16be(bytes, offset);
+    // A length counts its own two bytes, so anything under 2 is malformed, and
+    // a length running past the buffer means the stream is truncated or lying.
+    if (length === null || length < 2 || offset + length > bytes.length) {
+      return null;
+    }
+
+    if (isFrameMarker(marker)) {
+      // precision(1) then height(2) then width(2), immediately after length.
+      return validate(
+        "image/jpeg",
+        u16be(bytes, offset + 5),
+        u16be(bytes, offset + 3),
+      );
+    }
+
+    offset += length;
+  }
+
+  return null;
+}
+
 export function sniffImage(bytes: Uint8Array): ImageInfo | null {
   if (startsWith(bytes, PNG_SIGNATURE)) return sniffPng(bytes);
+  if (startsWith(bytes, [0xff, 0xd8])) return sniffJpeg(bytes);
   return null;
 }

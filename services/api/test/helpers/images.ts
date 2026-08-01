@@ -16,3 +16,24 @@ export function pngBytes(width: number, height: number): Uint8Array {
   view.setUint32(20, height);
   return bytes;
 }
+
+/**
+ * A minimal JPEG: SOI, one irrelevant APP0 segment to prove the scanner skips
+ * segments it does not care about, then a frame header carrying the size.
+ */
+export function jpegBytes(
+  width: number,
+  height: number,
+  sofMarker = 0xc0,
+): Uint8Array {
+  return new Uint8Array([
+    0xff, 0xd8, // SOI
+    0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, // APP0, length 4 (includes the 2 length bytes)
+    0xff, sofMarker, 0x00, 0x11, // SOF, length 17
+    0x08, // sample precision
+    (height >> 8) & 0xff, height & 0xff,
+    (width >> 8) & 0xff, width & 0xff,
+    0x03, // component count; the 9 bytes below are its component specs
+    ...new Array(9).fill(0),
+  ]);
+}

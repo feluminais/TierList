@@ -24,6 +24,12 @@ const nextConfig: NextConfig = {
       // Turbopack still resolves statically for the browser bundle.
       fs: { browser: "./stubs/empty.js" },
       path: { browser: "./stubs/empty.js" },
+      // Skia's ReanimatedProxy try/catch-requires react-native-reanimated and
+      // falls back when it throws. apps/mobile made reanimated resolvable, so
+      // Turbopack started following that require into raw React Native Flow
+      // source. Unconditional (not `{ browser }`): the server graph reaches it
+      // too, via the Server Component pass over app/spike/SpikeClient.tsx.
+      "react-native-reanimated": "./stubs/reanimated-absent.js",
     },
     resolveExtensions: [
       ".web.tsx",

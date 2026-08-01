@@ -2,6 +2,19 @@ packages:
   - "apps/*"
   - "packages/*"
   - "services/*"
+overrides:
+  # Expo SDK 57 pins these exactly, and a tested matrix is the whole point of
+  # an SDK release. Next.js accepts any React 19.x and apps/web never runs
+  # React Native (it aliases to react-native-web), so the flexible side adapts
+  # to the rigid one. These overrides also cover *transitive* resolutions --
+  # notably @shopify/react-native-skia's peer on react-native -- so a second
+  # copy of React or React Native cannot re-enter the graph and produce the
+  # "Invalid hook call" / blank-canvas failure that looks like a Skia bug.
+  # Keep in lockstep with apps/mobile/package.json when bumping the SDK.
+  react: 19.2.3
+  react-dom: 19.2.3
+  react-native: 0.86.0
+  "@shopify/react-native-skia": 2.6.2
 allowBuilds:
   # All three resolve their native binary from prebuilt platform-specific
   # optional deps (@esbuild/*, @img/sharp-*, @unrs/resolver-binding-*). No
@@ -18,6 +31,25 @@ allowBuilds:
   # NOTE: this denial is workspace-wide and applies to future *direct*
   # dependents (e.g. services/api). For cross-platform deploys use
   # supportedArchitectures, not this flag.
+  #
+  #   @shopify/react-native-skia
+  #                 UNLIKE the three entries above, this postinstall is
+  #                 REQUIRED. Do not pattern-match it to them: there the
+  #                 prebuilt binary was already in place and the script was
+  #                 redundant, so denying it cost nothing. Here the binary
+  #                 ships in a *sibling* package and the script is the only
+  #                 thing that puts it where the build looks.
+  #                 scripts/install-libs.js is a pure local fs.cpSync -- no
+  #                 network, no downloads, no child_process -- that copies
+  #                 prebuilt binaries out of react-native-skia-android and
+  #                 react-native-skia-apple-{ios,macos,tvos} into the
+  #                 package's own libs/, which is exactly the path
+  #                 android/build.gradle reads (skiaLibsPath =
+  #                 "${projectDir}/../libs/android"). Denying it breaks the
+  #                 Android native build.
+  #                 Note 2.10.1 had no postinstall at all; it was added in
+  #                 the 2.6.x line, which is why this entry is new.
   esbuild: false
   sharp: false
   unrs-resolver: false
+  '@shopify/react-native-skia': true

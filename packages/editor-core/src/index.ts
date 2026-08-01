@@ -3,3 +3,5 @@ export * from "./layout";
 export * from "./hit";
 export * from "./drag";
 export * from "./history";
+export * from "./autoscroll";
+export * from "./preview";

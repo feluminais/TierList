@@ -5,3 +5,4 @@ export * from "./drag";
 export * from "./history";
 export * from "./autoscroll";
 export * from "./preview";
+export * from "./session";

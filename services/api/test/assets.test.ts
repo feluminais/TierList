@@ -206,6 +206,30 @@ describe("POST /assets", () => {
     expect((await upload(pngBytes(9, 9))).status).toBe(200);
   });
 
+  /**
+   * The route checks findAssetByChecksum before inserting, but that check and
+   * the insert are not one atomic step. Two concurrent uploads of the same
+   * bytes by the same owner can both miss the check and both attempt to
+   * insert; the unique index (assets_owner_checksum_idx) then rejects the
+   * second insert with Postgres error 23505, uncaught, which Hono's default
+   * error handler turns into a bare 500. That is a defensible outcome — the
+   * race is rare and the client can just retry the upload, which will now
+   * hit the dedupe path and get the winner's asset back — but only if it
+   * stays exactly this and doesn't silently regress into a 200 with two rows
+   * for the same bytes, or a crash. This test exists to notice either.
+   */
+  it("gives the loser of a concurrent duplicate upload a 500, not a silent double-write", async () => {
+    const [a, b] = await Promise.all([upload(pngBytes(40, 40)), upload(pngBytes(40, 40))]);
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([201, 500]);
+
+    // Confirm the race did not leave two rows behind: the winner's checksum
+    // still resolves to exactly one asset.
+    const winner = a.status === 201 ? a : b;
+    const { id } = (await winner.json()) as { id: string };
+    expect(await createRepository(testDb.db).findAsset(id)).not.toBeNull();
+  });
+
   it("serves the bytes back with the sniffed content type", async () => {
     const { id } = (await (await upload(jpegBytes(30, 20))).json()) as { id: string };
     const res = await app.request(`/assets/${id}`);

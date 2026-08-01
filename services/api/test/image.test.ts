@@ -122,16 +122,33 @@ describe("sniffImage — JPEG", () => {
     expect(sniffImage(bytes)).toBeNull();
   });
 
-  // Distinct from the case above: this one places the too-short length on the
-  // SOF segment itself, with real dimension bytes sitting right after it. A
-  // check that merely requires length >= 1 would let this through and read a
-  // width/height out of what is actually the next segment's data.
-  it("rejects a SOF segment whose declared length cannot hold a frame header", () => {
+  // Same shape as the case above but on the SOF segment itself rather than
+  // APP0. This still only exercises the generic `length < 2` floor (a length
+  // of 1 cannot even hold the length field), not anything frame-specific —
+  // see the next test for that.
+  it("rejects a SOF segment whose declared length is below the generic floor", () => {
     const bytes = jpegBytes(64, 32);
     bytes[10] = 0x00;
     bytes[11] = 0x01; // SOF length 1 — too short to hold even the length field
     expect(sniffImage(bytes)).toBeNull();
   });
+
+  // A frame header needs precision(1) + height(2) + width(2) = 5 bytes past
+  // the 2-byte length field, so a genuine SOF segment needs length >= 7. A
+  // length in 2..6 passes the generic floor above but is still too short to
+  // contain those fields — and because the buffer genuinely continues past
+  // the (too-short) segment, a missing check here does not fail loudly: the
+  // two dimension reads succeed anyway, against bytes that belong to
+  // whatever follows, and return a confident wrong answer instead of null.
+  it.each([2, 4, 6])(
+    "rejects a SOF segment declaring length %i, too short for a frame header",
+    (length) => {
+      const bytes = jpegBytes(64, 32);
+      bytes[10] = (length >> 8) & 0xff;
+      bytes[11] = length & 0xff;
+      expect(sniffImage(bytes)).toBeNull();
+    },
+  );
 
   it("rejects SOI with nothing after it", () => {
     expect(sniffImage(new Uint8Array([0xff, 0xd8]))).toBeNull();
@@ -221,10 +238,49 @@ describe("sniffImage — rejection", () => {
     expect(sniffImage(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))).toBeNull();
   });
 
-  it("never throws, whatever it is handed", () => {
+  it("never throws on arbitrary all-0xff input of any length", () => {
+    // Fails every signature check in sniffImage, so this only proves
+    // startsWith() itself is safe — see the sweep below for the sniffers.
     for (let length = 0; length < 40; length++) {
       const bytes = new Uint8Array(length).fill(0xff);
       expect(() => sniffImage(bytes)).not.toThrow();
     }
   });
+
+  // Every prefix of a real header, from empty up to the full thing. This is
+  // the sweep that actually matters: a genuine signature gets each sniffer
+  // past its startsWith() gate and into its bounds-checked reads, so walking
+  // every truncation point exercises every one of those checks — the u32be/
+  // u16be/u16le/u24le/u32le/u8 reads, the isFrameMarker length floor, the
+  // WebP start-code and signature-byte checks, all of it. A version of this
+  // that used arbitrary bytes instead of real headers (see the test above)
+  // would never reach past the first signature check.
+  it.each([
+    ["PNG", "image/png", pngBytes(10, 10)],
+    ["JPEG", "image/jpeg", jpegBytes(10, 10)],
+    ["WebP lossy", "image/webp", webpLossyBytes(10, 10)],
+    ["WebP lossless", "image/webp", webpLosslessBytes(10, 10)],
+    ["WebP extended", "image/webp", webpExtendedBytes(10, 10)],
+  ] as const)(
+    "never throws on any truncation of a %s header, and never returns a wrong result",
+    (_name, contentType, full) => {
+      const correct = { contentType, width: 10, height: 10 };
+      for (let n = 0; n <= full.length; n++) {
+        const truncated = full.slice(0, n);
+        let result: ReturnType<typeof sniffImage>;
+        expect(() => {
+          result = sniffImage(truncated);
+        }).not.toThrow();
+        // A truncated header must never be reported as this exact 10x10
+        // image — that is only correct at full length. Anything short of
+        // that must be rejected outright (null), never a confident wrong
+        // answer built from bytes past the end of the real header.
+        if (n < full.length) {
+          expect(result!).not.toEqual(correct);
+        } else {
+          expect(result!).toEqual(correct);
+        }
+      }
+    },
+  );
 });

@@ -47,8 +47,8 @@ function u32be(bytes: Uint8Array, offset: number): number | null {
   );
 }
 
-/** Both dimensions present, positive, and not absurd. */
-function validate(
+/** Checks both dimensions are present, positive, and not absurd, then packages the result. */
+function toImageInfo(
   contentType: ImageContentType,
   width: number | null,
   height: number | null,
@@ -63,7 +63,7 @@ function sniffPng(bytes: Uint8Array): ImageInfo | null {
   // The IHDR chunk is required by the spec to come first, so its position is
   // fixed: 8 bytes of signature, then length(4) and type(4).
   if (!tagAt(bytes, 12, "IHDR")) return null;
-  return validate("image/png", u32be(bytes, 16), u32be(bytes, 20));
+  return toImageInfo("image/png", u32be(bytes, 16), u32be(bytes, 20));
 }
 
 function u16be(bytes: Uint8Array, offset: number): number | null {
@@ -86,8 +86,8 @@ function sniffJpeg(bytes: Uint8Array): ImageInfo | null {
   let offset = 2; // past SOI
 
   while (offset < bytes.length) {
-    // A marker is 0xFF followed by a non-0xFF, non-zero byte. Any number of
-    // 0xFF fill bytes may precede it, which is legal and does occur.
+    // A marker is 0xFF followed by a byte that is not itself 0xFF. Any number
+    // of 0xFF fill bytes may precede it, which is legal and does occur.
     if (bytes[offset] !== 0xff) return null;
     while (offset < bytes.length && bytes[offset] === 0xff) offset++;
 
@@ -106,8 +106,14 @@ function sniffJpeg(bytes: Uint8Array): ImageInfo | null {
     }
 
     if (isFrameMarker(marker)) {
-      // precision(1) then height(2) then width(2), immediately after length.
-      return validate(
+      // The length field counts itself (2 bytes), then precision(1),
+      // height(2), width(2) follow — 5 more bytes, so a genuine frame header
+      // needs a declared length of at least 7. Without this check a short
+      // length here still lets the two u16be reads below succeed against
+      // whatever bytes happen to follow this segment, returning a confident
+      // wrong answer instead of failing.
+      if (length < 7) return null;
+      return toImageInfo(
         "image/jpeg",
         u16be(bytes, offset + 5),
         u16be(bytes, offset + 3),
@@ -118,6 +124,11 @@ function sniffJpeg(bytes: Uint8Array): ImageInfo | null {
   }
 
   return null;
+}
+
+function u8(bytes: Uint8Array, offset: number): number | null {
+  if (offset >= bytes.length) return null;
+  return bytes[offset]!;
 }
 
 function u16le(bytes: Uint8Array, offset: number): number | null {
@@ -153,12 +164,15 @@ function sniffWebp(bytes: Uint8Array): ImageInfo | null {
   if (tagAt(bytes, 12, "VP8 ")) {
     // A 3-byte frame tag, then a fixed start code, then two 14-bit fields. The
     // start code is checked because without it any 10 bytes would parse.
-    if (!(bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a)) {
+    const startCode0 = u8(bytes, 23);
+    const startCode1 = u8(bytes, 24);
+    const startCode2 = u8(bytes, 25);
+    if (startCode0 !== 0x9d || startCode1 !== 0x01 || startCode2 !== 0x2a) {
       return null;
     }
     const width = u16le(bytes, 26);
     const height = u16le(bytes, 28);
-    return validate(
+    return toImageInfo(
       "image/webp",
       width === null ? null : width & 0x3fff,
       height === null ? null : height & 0x3fff,
@@ -166,12 +180,12 @@ function sniffWebp(bytes: Uint8Array): ImageInfo | null {
   }
 
   if (tagAt(bytes, 12, "VP8L")) {
-    if (bytes[20] !== 0x2f) return null;
+    if (u8(bytes, 20) !== 0x2f) return null;
     const packed = u32le(bytes, 21);
     if (packed === null) return null;
     // Both sizes are stored minus one, so the field range 0..16383 expresses
     // 1..16384 and a zero dimension is unrepresentable by construction.
-    return validate(
+    return toImageInfo(
       "image/webp",
       (packed & 0x3fff) + 1,
       ((packed >>> 14) & 0x3fff) + 1,
@@ -181,7 +195,7 @@ function sniffWebp(bytes: Uint8Array): ImageInfo | null {
   if (tagAt(bytes, 12, "VP8X")) {
     const width = u24le(bytes, 24);
     const height = u24le(bytes, 27);
-    return validate(
+    return toImageInfo(
       "image/webp",
       width === null ? null : width + 1,
       height === null ? null : height + 1,

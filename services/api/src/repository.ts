@@ -1,5 +1,5 @@
 import { migrate, type TierList } from "@tl/core";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { drizzle } from "drizzle-orm/pglite";
 import { tierLists, type NewTierListRow } from "./schema";
 
@@ -8,6 +8,7 @@ type Db = ReturnType<typeof drizzle>;
 export interface Repository {
   save: (doc: TierList) => Promise<void>;
   load: (id: string) => Promise<TierList | null>;
+  update: (doc: TierList, expectedRevision: number) => Promise<void>;
 }
 
 /** The single place projected columns are derived from the document. */
@@ -24,6 +25,18 @@ function toRow(doc: TierList): NewTierListRow {
     createdAt: new Date(doc.createdAt),
     updatedAt: new Date(doc.updatedAt),
   };
+}
+
+export class RevisionConflictError extends Error {
+  constructor(
+    readonly id: string,
+    readonly expected: number,
+  ) {
+    super(
+      `Tier list ${id} was modified by someone else (expected revision ${expected}).`,
+    );
+    this.name = "RevisionConflictError";
+  }
 }
 
 export function createRepository(db: Db): Repository {
@@ -48,6 +61,28 @@ export function createRepository(db: Db): Repository {
 
       // migrate() is the only thing that decides what a stored document means.
       return migrate(row.document);
+    },
+
+    // The conflict and the missing-row case deliberately produce the same
+    // error: from the client's perspective both mean "your update did not
+    // apply, re-read and retry", and distinguishing them would leak whether
+    // an id exists.
+    async update(doc, expectedRevision) {
+      const row = toRow(doc);
+      const updated = await db
+        .update(tierLists)
+        .set(row)
+        .where(
+          and(
+            eq(tierLists.id, doc.id),
+            eq(tierLists.revision, expectedRevision),
+          ),
+        )
+        .returning({ id: tierLists.id });
+
+      if (updated.length === 0) {
+        throw new RevisionConflictError(doc.id, expectedRevision);
+      }
     },
   };
 }

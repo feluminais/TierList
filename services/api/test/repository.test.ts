@@ -1,6 +1,10 @@
 import { createTierList, reduce } from "@tl/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createRepository, type Repository } from "../src/repository";
+import {
+  createRepository,
+  RevisionConflictError,
+  type Repository,
+} from "../src/repository";
 import { createTestDb, type TestDb } from "./helpers/pglite";
 
 const NOW = "2026-08-01T12:00:00.000Z";
@@ -63,5 +67,58 @@ describe("save and load", () => {
       "select title, revision from tier_lists where id = 'list-1'",
     );
     expect(rows.rows[0]).toMatchObject({ title: "Tonkotsu", revision: 1 });
+  });
+});
+
+describe("update with optimistic concurrency", () => {
+  it("accepts an update whose expected revision matches", async () => {
+    const doc = createTierList({ id: "list-1", now: NOW });
+    await repo.save(doc);
+
+    const next = reduce(
+      doc,
+      { type: "meta/set", patch: { title: "Ramen" } },
+      NOW,
+    );
+    await repo.update(next, 0);
+
+    const loaded = await repo.load("list-1");
+    expect(loaded?.title).toBe("Ramen");
+    expect(loaded?.revision).toBe(1);
+  });
+
+  it("rejects an update whose expected revision is stale", async () => {
+    const doc = createTierList({ id: "list-1", now: NOW });
+    await repo.save(doc);
+
+    const a = reduce(doc, { type: "meta/set", patch: { title: "A" } }, NOW);
+    await repo.update(a, 0);
+
+    const b = reduce(doc, { type: "meta/set", patch: { title: "B" } }, NOW);
+    await expect(repo.update(b, 0)).rejects.toBeInstanceOf(
+      RevisionConflictError,
+    );
+  });
+
+  it("leaves the stored document untouched when it rejects", async () => {
+    const doc = createTierList({ id: "list-1", now: NOW });
+    await repo.save(doc);
+    const a = reduce(doc, { type: "meta/set", patch: { title: "A" } }, NOW);
+    await repo.update(a, 0);
+
+    const b = reduce(doc, { type: "meta/set", patch: { title: "B" } }, NOW);
+    await expect(repo.update(b, 0)).rejects.toBeInstanceOf(
+      RevisionConflictError,
+    );
+
+    const loaded = await repo.load("list-1");
+    expect(loaded?.title).toBe("A");
+  });
+
+  it("rejects an update to a document that does not exist", async () => {
+    const doc = createTierList({ id: "ghost", now: NOW });
+    await expect(repo.update(doc, 0)).rejects.toBeInstanceOf(
+      RevisionConflictError,
+    );
   });
 });

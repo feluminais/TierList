@@ -1,6 +1,7 @@
 export * from "./crop";
 export * from "./geometry";
 export * from "./imagefit";
+export * from "./strokes";
 export * from "./layout";
 export * from "./hit";
 export * from "./drag";

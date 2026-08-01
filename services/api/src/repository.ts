@@ -1,9 +1,22 @@
 import { migrate, type TierList } from "@tl/core";
 import { and, eq } from "drizzle-orm";
-import type { drizzle } from "drizzle-orm/pglite";
+import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { tierLists, type NewTierListRow } from "./schema";
 
-type Db = ReturnType<typeof drizzle>;
+/**
+ * The driver-agnostic base both Drizzle Postgres drivers extend:
+ * `PgliteDatabase` (tests) and `NodePgDatabase` (production) are each declared
+ * as `PgDatabase<TheirOwnQueryResultHKT, TSchema>`, and both query-result HKTs
+ * extend `PgQueryResultHKT`. Typing against the base rather than one driver is
+ * what makes testing on PGlite meaningful: the repository is compiled against
+ * exactly the surface both drivers agree on, so a difference between them would
+ * surface here as a type error rather than at runtime in production.
+ *
+ * `Record<string, unknown>` is the schema parameter's own constraint. The
+ * repository uses only the core query builder, never the relational `db.query`
+ * API, so it is indifferent to which schema a caller registered.
+ */
+type Db = PgDatabase<PgQueryResultHKT, Record<string, unknown>>;
 
 export interface Repository {
   /**

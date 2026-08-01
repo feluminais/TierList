@@ -1,0 +1,16 @@
+# Optional. Tests use PGlite and need nothing running.
+# This exists for when you want a real server to point a GUI at.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: tierlist
+      POSTGRES_USER: tierlist
+      POSTGRES_DB: tierlist
+    ports:
+      - "5432:5432"
+    volumes:
+      - tierlist-pg:/var/lib/postgresql/data
+
+volumes:
+  tierlist-pg:

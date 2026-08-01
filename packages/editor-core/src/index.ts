@@ -1,4 +1,5 @@
 export * from "./geometry";
+export * from "./imagefit";
 export * from "./layout";
 export * from "./hit";
 export * from "./drag";

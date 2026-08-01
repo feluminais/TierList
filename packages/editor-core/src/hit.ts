@@ -14,6 +14,31 @@ export interface DropTarget {
   index: number;
 }
 
+export interface FoundTile {
+  /** Comparable with a `dropTargetAt` result: `layoutBoard` emits tiles in
+   *  placement index order, and placement indices are contiguous within a
+   *  location, so a tile's position in this array *is* its placement index —
+   *  which is also what `insertionIndex` returns for a point over that tile
+   *  once the dragged item is excluded. */
+  at: DropTarget;
+  rect: Rect;
+}
+
+/** Where an item currently sits, so a drop back onto it can be recognised. */
+export function findTile(layout: BoardLayout, itemId: string): FoundTile | null {
+  for (const row of layout.rows) {
+    const index = row.tiles.findIndex((t) => t.itemId === itemId);
+    const tile = row.tiles[index];
+    if (tile) return { at: { rowId: row.rowId, index }, rect: tile.rect };
+  }
+
+  const trayIndex = layout.tray.tiles.findIndex((t) => t.itemId === itemId);
+  const trayTile = layout.tray.tiles[trayIndex];
+  if (trayTile) return { at: { rowId: null, index: trayIndex }, rect: trayTile.rect };
+
+  return null;
+}
+
 /**
  * What is under `point`. Tiles win over the areas beneath them, because a
  * tile is drawn on top of its row and a press on one means the tile.

@@ -1,6 +1,6 @@
 import type { TierListAction } from "@tl/core";
-import type { Point, Rect } from "./geometry";
-import { dropTargetAt, hitTest, type DropTarget } from "./hit";
+import type { Point } from "./geometry";
+import { dropTargetAt, findTile, hitTest, type DropTarget } from "./hit";
 import type { BoardLayout } from "./layout";
 
 /**
@@ -80,31 +80,6 @@ function distance(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-interface ItemLocation {
-  /** Comparable with a `dropTargetAt` result: `layoutBoard` emits tiles in
-   *  placement index order, and placement indices are contiguous within a
-   *  location, so a tile's position in this array *is* its placement index —
-   *  which is also what `insertionIndex` returns for a point over that tile
-   *  once the dragged item is excluded. */
-  at: DropTarget;
-  rect: Rect;
-}
-
-/** Where an item currently sits, so a drop back onto it can be recognised. */
-function locate(layout: BoardLayout, itemId: string): ItemLocation | null {
-  for (const row of layout.rows) {
-    const index = row.tiles.findIndex((t) => t.itemId === itemId);
-    const tile = row.tiles[index];
-    if (tile) return { at: { rowId: row.rowId, index }, rect: tile.rect };
-  }
-
-  const trayIndex = layout.tray.tiles.findIndex((t) => t.itemId === itemId);
-  const trayTile = layout.tray.tiles[trayIndex];
-  if (trayTile) return { at: { rowId: null, index: trayIndex }, rect: trayTile.rect };
-
-  return null;
-}
-
 /**
  * Turn a held press into a drag.
  *
@@ -118,7 +93,7 @@ function promote(
   at: PointerSample,
   layout: BoardLayout,
 ): DragResult {
-  const found = locate(layout, state.itemId);
+  const found = findTile(layout, state.itemId);
 
   // The item went away under the finger. There is nothing to pick up, and
   // dragging a phantom would end in a `placement/place` for an item the

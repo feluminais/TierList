@@ -3,7 +3,6 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   transpilePackages: [
-    "@tl/editor-spike",
     "@shopify/react-native-skia",
     "react-native-web",
   ],

@@ -1,5 +1,5 @@
 import { migrate, type TierList } from "@tl/core";
-import type { ListSummary, TokenResponse, WriteResponse } from "./types";
+import type { AssetResponse, ListSummary, TokenResponse, WriteResponse } from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -27,6 +27,14 @@ export interface Client {
     expectedRevision: number,
   ) => Promise<WriteResponse>;
   listMine: () => Promise<ListSummary[]>;
+  /**
+   * Uploads raw image bytes. The server decides what the image really is by
+   * reading it, so `contentType` here is only a hint and may be corrected in
+   * the response.
+   */
+  uploadAsset: (bytes: Uint8Array, contentType: string) => Promise<AssetResponse>;
+  /** Where an asset's bytes are served from. Public — no token involved. */
+  assetUrl: (id: string) => string;
 }
 
 export function createClient(options: ClientOptions): Client {
@@ -92,6 +100,40 @@ export function createClient(options: ClientOptions): Client {
       const res = await call("/lists", { method: "GET", auth: true });
       const body = (await expectOk(res)) as { lists: ListSummary[] };
       return body.lists;
+    },
+
+    async uploadAsset(bytes, contentType) {
+      // Not routed through `call`: that helper sets a JSON content type and
+      // stringifies its body, and this endpoint takes neither.
+      const headers: Record<string, string> = { "content-type": contentType };
+      if (options.token) headers.authorization = `Bearer ${options.token}`;
+
+      const res = await options.fetch(`${base}/assets`, {
+        method: "POST",
+        headers,
+        // Cast needed, and to `any` rather than `BodyInit` specifically:
+        // `BodyInit` isn't even an ambient name in this package's own
+        // DOM-less tsconfig (its `RequestInit` comes from @types/node's
+        // undici shim instead), while a consumer like apps/web sees the
+        // overloaded union of the DOM and @types/node declarations and
+        // rejects a raw Uint8Array against *that* merged type (see
+        // docs/superpowers/STATE.md for the underlying tsconfig gap). No
+        // single named type satisfies both compilation contexts. Every
+        // real fetch implementation (browser, RN, Node) accepts a
+        // Uint8Array body at runtime; only the declared types disagree.
+        body: bytes as any,
+      });
+      return (await expectOk(res)) as AssetResponse;
+    },
+
+    assetUrl(id) {
+      // Ids are server-generated UUIDs (routes.ts uses randomUUID()), so
+      // encoding is a no-op on every real id. It's kept anyway because the
+      // failure mode for skipping it is silent, not loud: a stray "#" would
+      // truncate the URL into a fragment and a "?" would start a query
+      // string, and the string goes straight into Skia.Data.fromURI in the
+      // renderer, which has no console to report a malformed request to.
+      return `${base}/assets/${encodeURIComponent(id)}`;
     },
   };
 }

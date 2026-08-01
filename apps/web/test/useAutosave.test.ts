@@ -74,6 +74,10 @@ function fakeClient(): { client: Client; calls: Pending[] } {
     listMine: () => Promise.resolve([]),
     createList: (doc) => hold("create", doc),
     updateList: (doc, expectedRevision) => hold("update", doc, expectedRevision),
+    uploadAsset: () => Promise.reject(new Error("not used here")),
+    assetUrl: () => {
+      throw new Error("not used here");
+    },
   };
   return { client, calls };
 }

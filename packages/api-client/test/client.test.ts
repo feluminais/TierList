@@ -118,3 +118,90 @@ describe("createClient", () => {
     expect(fetchFn.mock.calls[0]![0]).toBe(`${BASE}/lists`);
   });
 });
+
+describe("assets", () => {
+  it("posts raw bytes with the declared type and no JSON wrapper", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const client = createClient({
+      baseUrl: "https://api.test",
+      token: "t".repeat(43),
+      fetch: (async (url: string, init: RequestInit) => {
+        calls.push({ url, init });
+        return new Response(
+          JSON.stringify({
+            id: "a1", contentType: "image/png", width: 10, height: 5, byteSize: 24,
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }) as unknown as typeof globalThis.fetch,
+    });
+
+    const bytes = new Uint8Array([1, 2, 3]);
+    const result = await client.uploadAsset(bytes, "image/png");
+
+    expect(result).toEqual({
+      id: "a1", contentType: "image/png", width: 10, height: 5, byteSize: 24,
+    });
+    expect(calls[0]!.url).toBe("https://api.test/assets");
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(calls[0]!.init.body).toBe(bytes);
+    expect((calls[0]!.init.headers as Record<string, string>)["content-type"]).toBe("image/png");
+    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe(
+      `Bearer ${"t".repeat(43)}`,
+    );
+  });
+
+  it("omits authorization when no token is configured", async () => {
+    const calls: { init: RequestInit }[] = [];
+    const client = createClient({
+      baseUrl: "https://api.test",
+      fetch: (async (_url: string, init: RequestInit) => {
+        calls.push({ init });
+        return new Response(
+          JSON.stringify({
+            id: "a1", contentType: "image/png", width: 10, height: 5, byteSize: 24,
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }) as unknown as typeof globalThis.fetch,
+    });
+
+    await client.uploadAsset(new Uint8Array([1]), "image/png");
+
+    expect(
+      (calls[0]!.init.headers as Record<string, string>).authorization,
+    ).toBeUndefined();
+  });
+
+  it("raises an ApiError carrying the status for a rejected upload", async () => {
+    const client = createClient({
+      baseUrl: "https://api.test",
+      token: "t".repeat(43),
+      fetch: (async () =>
+        new Response(JSON.stringify({ error: "unsupported image" }), {
+          status: 415,
+          headers: { "content-type": "application/json" },
+        })) as unknown as typeof globalThis.fetch,
+    });
+
+    await expect(client.uploadAsset(new Uint8Array([1]), "image/png")).rejects.toMatchObject({
+      status: 415,
+      message: "unsupported image",
+    });
+  });
+
+  it("builds an asset URL against the same base, with the trailing slash stripped", () => {
+    const client = createClient({ baseUrl: "https://api.test/", fetch: globalThis.fetch });
+    expect(client.assetUrl("a1")).toBe("https://api.test/assets/a1");
+  });
+
+  it("encodes an id so a stray '#' or '?' can't hijack the URL", () => {
+    // Ids are server-generated UUIDs in practice, but assetUrl is fed
+    // straight into Skia.Data.fromURI by the renderer, where a malformed
+    // URL fails silently. "#" would truncate into a fragment and "?" would
+    // start a query string, so both must survive as literal path segments.
+    const client = createClient({ baseUrl: "https://api.test", fetch: globalThis.fetch });
+    expect(client.assetUrl("a#b")).toBe("https://api.test/assets/a%23b");
+    expect(client.assetUrl("a?b")).toBe("https://api.test/assets/a%3Fb");
+  });
+});

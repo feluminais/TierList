@@ -13,3 +13,11 @@ export interface ListSummary {
   title: string;
   updatedAt: string;
 }
+
+export interface AssetResponse {
+  id: string;
+  contentType: string;
+  width: number;
+  height: number;
+  byteSize: number;
+}

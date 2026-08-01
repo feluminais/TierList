@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { sniffImage } from "../src/image";
-import { jpegBytes, pngBytes } from "./helpers/images";
+import {
+  jpegBytes,
+  pngBytes,
+  webpExtendedBytes,
+  webpLosslessBytes,
+  webpLossyBytes,
+} from "./helpers/images";
 
 describe("sniffImage — PNG", () => {
   it("reads dimensions from the IHDR chunk", () => {
@@ -106,5 +112,96 @@ describe("sniffImage — JPEG", () => {
 
   it("rejects SOI with nothing after it", () => {
     expect(sniffImage(new Uint8Array([0xff, 0xd8]))).toBeNull();
+  });
+});
+
+describe("sniffImage — WebP", () => {
+  it("reads a lossy VP8 frame", () => {
+    expect(sniffImage(webpLossyBytes(320, 240))).toEqual({
+      contentType: "image/webp",
+      width: 320,
+      height: 240,
+    });
+  });
+
+  it("reads a lossless VP8L bitstream", () => {
+    expect(sniffImage(webpLosslessBytes(320, 240))).toEqual({
+      contentType: "image/webp",
+      width: 320,
+      height: 240,
+    });
+  });
+
+  it("reads an extended VP8X canvas", () => {
+    expect(sniffImage(webpExtendedBytes(4000, 3000))).toEqual({
+      contentType: "image/webp",
+      width: 4000,
+      height: 3000,
+    });
+  });
+
+  // 14 bits hold 16384, and the stored value is size-1, so this is the ceiling
+  // the lossy and lossless formats can express at all.
+  it("reads the largest size the 14-bit fields can hold", () => {
+    expect(sniffImage(webpLossyBytes(16383, 16383))).toEqual({
+      contentType: "image/webp",
+      width: 16383,
+      height: 16383,
+    });
+    expect(sniffImage(webpLosslessBytes(16384, 16384))).toEqual({
+      contentType: "image/webp",
+      width: 16384,
+      height: 16384,
+    });
+  });
+
+  it("rejects RIFF that is not WEBP", () => {
+    const bytes = webpLossyBytes(10, 10);
+    bytes.set([0x57, 0x41, 0x56, 0x45], 8); // "WAVE"
+    expect(sniffImage(bytes)).toBeNull();
+  });
+
+  it("rejects an unknown WebP chunk type", () => {
+    const bytes = webpLossyBytes(10, 10);
+    bytes.set([0x56, 0x50, 0x39, 0x20], 12); // "VP9 "
+    expect(sniffImage(bytes)).toBeNull();
+  });
+
+  it("rejects a lossy frame with the wrong start code", () => {
+    const bytes = webpLossyBytes(10, 10);
+    bytes[24] = 0x00;
+    expect(sniffImage(bytes)).toBeNull();
+  });
+
+  it("rejects a lossless frame with the wrong signature byte", () => {
+    const bytes = webpLosslessBytes(10, 10);
+    bytes[20] = 0x00;
+    expect(sniffImage(bytes)).toBeNull();
+  });
+
+  it.each([
+    ["lossy", webpLossyBytes(10, 10)],
+    ["lossless", webpLosslessBytes(10, 10)],
+    ["extended", webpExtendedBytes(10, 10)],
+  ])("rejects a truncated %s file", (_name, bytes) => {
+    expect(sniffImage(bytes.slice(0, bytes.length - 1))).toBeNull();
+  });
+});
+
+describe("sniffImage — rejection", () => {
+  it("rejects a format we do not accept", () => {
+    // GIF87a. A real image, deliberately unsupported.
+    expect(sniffImage(new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x37, 0x61, 10, 0, 10, 0]))).toBeNull();
+  });
+
+  it("rejects arbitrary bytes", () => {
+    expect(sniffImage(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))).toBeNull();
+  });
+
+  it("never throws, whatever it is handed", () => {
+    for (let length = 0; length < 40; length++) {
+      const bytes = new Uint8Array(length).fill(0xff);
+      expect(() => sniffImage(bytes)).not.toThrow();
+    }
   });
 });

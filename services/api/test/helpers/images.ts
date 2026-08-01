@@ -37,3 +37,49 @@ export function jpegBytes(
     ...new Array(9).fill(0),
   ]);
 }
+
+function riffContainer(fourcc: string, payloadLength: number): Uint8Array {
+  const bytes = new Uint8Array(12 + 8 + payloadLength);
+  const view = new DataView(bytes.buffer);
+  const ascii = (text: string, at: number) => {
+    for (let i = 0; i < text.length; i++) bytes[at + i] = text.charCodeAt(i);
+  };
+  ascii("RIFF", 0);
+  view.setUint32(4, bytes.length - 8, true);
+  ascii("WEBP", 8);
+  ascii(fourcc, 12);
+  view.setUint32(16, payloadLength, true);
+  return bytes;
+}
+
+/** Lossy: a 3-byte frame tag, the start code, then two 14-bit LE fields. */
+export function webpLossyBytes(width: number, height: number): Uint8Array {
+  const bytes = riffContainer("VP8 ", 10);
+  bytes.set([0x9d, 0x01, 0x2a], 23);
+  const view = new DataView(bytes.buffer);
+  view.setUint16(26, width, true);
+  view.setUint16(28, height, true);
+  return bytes;
+}
+
+/** Lossless: a signature byte, then 28 bits packing both sizes minus one. */
+export function webpLosslessBytes(width: number, height: number): Uint8Array {
+  const bytes = riffContainer("VP8L", 5);
+  bytes[20] = 0x2f;
+  const packed = ((width - 1) | ((height - 1) << 14)) >>> 0;
+  new DataView(bytes.buffer).setUint32(21, packed, true);
+  return bytes;
+}
+
+/** Extended: 4 flag bytes, then two 24-bit LE canvas sizes minus one. */
+export function webpExtendedBytes(width: number, height: number): Uint8Array {
+  const bytes = riffContainer("VP8X", 10);
+  const u24 = (value: number, at: number) => {
+    bytes[at] = value & 0xff;
+    bytes[at + 1] = (value >> 8) & 0xff;
+    bytes[at + 2] = (value >> 16) & 0xff;
+  };
+  u24(width - 1, 24);
+  u24(height - 1, 27);
+  return bytes;
+}

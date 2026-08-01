@@ -120,8 +120,80 @@ function sniffJpeg(bytes: Uint8Array): ImageInfo | null {
   return null;
 }
 
+function u16le(bytes: Uint8Array, offset: number): number | null {
+  if (offset + 2 > bytes.length) return null;
+  return bytes[offset]! + (bytes[offset + 1]! << 8);
+}
+
+function u24le(bytes: Uint8Array, offset: number): number | null {
+  if (offset + 3 > bytes.length) return null;
+  return bytes[offset]! + (bytes[offset + 1]! << 8) + (bytes[offset + 2]! << 16);
+}
+
+function u32le(bytes: Uint8Array, offset: number): number | null {
+  if (offset + 4 > bytes.length) return null;
+  return (
+    (bytes[offset]! +
+      (bytes[offset + 1]! << 8) +
+      (bytes[offset + 2]! << 16) +
+      bytes[offset + 3]! * 0x1000000) >>>
+    0
+  );
+}
+
+/**
+ * WebP is a RIFF container whose first chunk names the codec, and the three
+ * codecs store the canvas size three different ways. All three are live: an
+ * encoder picks lossy for photographs, lossless for flat graphics, and extended
+ * whenever alpha or animation is present.
+ */
+function sniffWebp(bytes: Uint8Array): ImageInfo | null {
+  if (!tagAt(bytes, 8, "WEBP")) return null;
+
+  if (tagAt(bytes, 12, "VP8 ")) {
+    // A 3-byte frame tag, then a fixed start code, then two 14-bit fields. The
+    // start code is checked because without it any 10 bytes would parse.
+    if (!(bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a)) {
+      return null;
+    }
+    const width = u16le(bytes, 26);
+    const height = u16le(bytes, 28);
+    return validate(
+      "image/webp",
+      width === null ? null : width & 0x3fff,
+      height === null ? null : height & 0x3fff,
+    );
+  }
+
+  if (tagAt(bytes, 12, "VP8L")) {
+    if (bytes[20] !== 0x2f) return null;
+    const packed = u32le(bytes, 21);
+    if (packed === null) return null;
+    // Both sizes are stored minus one, so the field range 0..16383 expresses
+    // 1..16384 and a zero dimension is unrepresentable by construction.
+    return validate(
+      "image/webp",
+      (packed & 0x3fff) + 1,
+      ((packed >>> 14) & 0x3fff) + 1,
+    );
+  }
+
+  if (tagAt(bytes, 12, "VP8X")) {
+    const width = u24le(bytes, 24);
+    const height = u24le(bytes, 27);
+    return validate(
+      "image/webp",
+      width === null ? null : width + 1,
+      height === null ? null : height + 1,
+    );
+  }
+
+  return null;
+}
+
 export function sniffImage(bytes: Uint8Array): ImageInfo | null {
   if (startsWith(bytes, PNG_SIGNATURE)) return sniffPng(bytes);
   if (startsWith(bytes, [0xff, 0xd8])) return sniffJpeg(bytes);
+  if (startsWith(bytes, [0x52, 0x49, 0x46, 0x46])) return sniffWebp(bytes);
   return null;
 }

@@ -1,9 +1,22 @@
 "use client";
 
-import { createTierList, reduce, type TierList } from "@tl/core";
-import { useEffect, useMemo, useState, type ComponentType } from "react";
+import {
+  createTierList,
+  reduce,
+  type TierList,
+  type TierListAction,
+} from "@tl/core";
+import { useCallback, useEffect, useState, type ComponentType } from "react";
 
-type BoardProps = { doc: TierList; width: number };
+type BoardProps = {
+  doc: TierList;
+  width: number;
+  onAction: (action: TierListAction) => void;
+};
+
+/** Width the board is laid out against. Also the width of the surface below
+ *  that claims touch input, so the two cannot drift apart. */
+const BOARD_WIDTH = 800;
 
 /**
  * Nothing Skia-related may be imported at module scope in this file.
@@ -37,7 +50,7 @@ export default function SkiaHost() {
 
         const mod = await import("@tl/editor");
         if (!alive) return;
-        setBoard(() => mod.TierBoard);
+        setBoard(() => mod.InteractiveBoard);
       } catch (e) {
         if (alive) setError(String(e));
       }
@@ -47,7 +60,14 @@ export default function SkiaHost() {
     };
   }, []);
 
-  const doc = useMemo(() => sampleDoc(), []);
+  const [doc, setDoc] = useState<TierList>(sampleDoc);
+
+  // The clock lives here, at the boundary, exactly as it does in the gesture
+  // hook. A drag emits at most one action, so this runs once per completed
+  // drag and not once per frame.
+  const onAction = useCallback((action: TierListAction) => {
+    setDoc((current) => reduce(current, action, new Date().toISOString()));
+  }, []);
 
   if (error) {
     return <pre style={{ color: "#f88", padding: 16 }}>{error}</pre>;
@@ -55,7 +75,31 @@ export default function SkiaHost() {
   if (!Board) {
     return <p style={{ color: "#888", padding: 16 }}>Loading canvas…</p>;
   }
-  return <Board doc={doc} width={800} />;
+  return (
+    // `touch-action: none` is the only thing that stops a mobile browser
+    // stealing a drag. Once Chrome decides a touch belongs to a scroll it fires
+    // `touchcancel`, and react-native-web's responder system terminates on that
+    // path unconditionally — it consults `onResponderTerminationRequest` only
+    // for `contextmenu`, `scroll` and `selectionchange`
+    // (ResponderSystem.js, `isTerminateEvent`). Returning `false` cannot save
+    // the gesture, so the browser has to be stopped from claiming it at all.
+    // react-native-web reaches for the same lever for the same reason, and says
+    // so: see the comment above `scrollDisabled` in ScrollViewBase.
+    //
+    // The cost is that this surface no longer pans the page on a touch screen.
+    // Sized to the board rather than the block default so it costs exactly the
+    // board and not the empty column beside it.
+    //
+    // Autoscroll is deliberately not wired here. This route has no scroll
+    // container of its own — the page scrolls — so there is no viewport to
+    // measure a pointer against and no scroller to drive. It is exercised on
+    // mobile, where the board sits inside a ScrollView. When 2D gives this
+    // route real chrome, the board should get its own scroll container and the
+    // two can be wired together, which also gives the panning back.
+    <div style={{ touchAction: "none", width: BOARD_WIDTH }}>
+      <Board doc={doc} width={BOARD_WIDTH} onAction={onAction} />
+    </div>
+  );
 }
 
 /** A throwaway document so there is something to look at. Milestone 2D loads a real one. */

@@ -31,3 +31,66 @@ describe("migrate", () => {
     expect(() => migrate({ id: "x" })).toThrow(/schemaVersion/i);
   });
 });
+
+describe("schema 1 -> 2: tray ordering", () => {
+  /** A v1 document: every tray placement pinned at index 0. */
+  function v1(): Record<string, unknown> {
+    return {
+      ...createTierList({ id: "list-1", now: NOW }),
+      schemaVersion: 1,
+      items: [
+        { id: "i1", kind: "text", label: "one", edit: {}, order: 0 },
+        { id: "i2", kind: "text", label: "two", edit: {}, order: 1 },
+        { id: "i3", kind: "text", label: "three", edit: {}, order: 2 },
+      ],
+      placements: [
+        { itemId: "i3", rowId: null, index: 0 },
+        { itemId: "i1", rowId: null, index: 0 },
+        { itemId: "i2", rowId: "list-1-row-0", index: 0 },
+      ],
+    };
+  }
+
+  it("renumbers tray placements into a contiguous sequence ordered by item order", () => {
+    const doc = migrate(v1());
+    const tray = doc.placements
+      .filter((p) => p.rowId === null)
+      .sort((a, b) => a.index - b.index);
+    expect(tray.map((p) => p.itemId)).toEqual(["i1", "i3"]);
+    expect(tray.map((p) => p.index)).toEqual([0, 1]);
+  });
+
+  it("leaves placements that are in a row alone", () => {
+    const doc = migrate(v1());
+    const inRow = doc.placements.find((p) => p.itemId === "i2");
+    expect(inRow).toMatchObject({ rowId: "list-1-row-0", index: 0 });
+  });
+
+  it("stamps the document with the new schema version", () => {
+    expect(migrate(v1()).schemaVersion).toBe(SCHEMA_VERSION);
+    expect(SCHEMA_VERSION).toBe(2);
+  });
+
+  it("does not mutate the document it was given", () => {
+    const raw = v1();
+    migrate(raw);
+    expect(raw["schemaVersion"]).toBe(1);
+    expect((raw["placements"] as { index: number }[]).map((p) => p.index)).toEqual([0, 0, 0]);
+  });
+
+  it("survives a v1 document whose items or placements are missing", () => {
+    const bare = { schemaVersion: 1 };
+    expect(() => migrate(bare)).not.toThrow();
+    expect(migrate(bare).schemaVersion).toBe(SCHEMA_VERSION);
+  });
+
+  // The case above passes even if migrate() stamps the caller's object in
+  // place, because a mutated `bare` reads back as already-current. A migration
+  // with nothing to change may hand its input straight back, so the version
+  // stamp — not the migration — is what has to avoid writing through.
+  it("does not mutate a document its migration returned untouched", () => {
+    const bare: Record<string, unknown> = { schemaVersion: 1 };
+    migrate(bare);
+    expect(bare["schemaVersion"]).toBe(1);
+  });
+});

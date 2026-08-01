@@ -53,7 +53,9 @@ describe("create and load", () => {
       title: "Ramen",
       author_id: "user-1",
       revision: 0,
-      schema_version: 1,
+      // Read off the document, not written as a literal: the point of the
+      // column is that it tracks whatever @tl/core says the version is.
+      schema_version: doc.schemaVersion,
     });
   });
 

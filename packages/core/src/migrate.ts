@@ -15,10 +15,64 @@ export class SchemaTooNewError extends Error {
 type Migration = (doc: Record<string, unknown>) => Record<string, unknown>;
 
 /**
- * Keyed by the version being migrated FROM.
- * Empty at schema 1 — the first entry gets added when schema 2 lands.
+ * Schema 1 wrote every tray placement with `index: 0`, so the tray had no
+ * order at all. Schema 2 lays the tray out by index like any row, which means
+ * those zeros have to become a real sequence. Item `order` is the only stable
+ * ordering signal a v1 document carries, so the tray adopts it. Items sharing
+ * an `order` keep the order the placements array held, `sort` being stable —
+ * arbitrary, but deterministic, and still contiguous.
+ *
+ * Written defensively against `Record<string, unknown>` rather than `TierList`:
+ * the input is by definition a document this version of the code has never
+ * validated, and a migration that throws on a malformed field makes a document
+ * unopenable rather than imperfect.
  */
-const MIGRATIONS: Record<number, Migration> = {};
+const migrateV1ToV2: Migration = (doc) => {
+  const placements = doc["placements"];
+  const items = doc["items"];
+  if (!Array.isArray(placements)) return doc;
+
+  const orderOf = new Map<string, number>();
+  if (Array.isArray(items)) {
+    items.forEach((item, position) => {
+      if (typeof item !== "object" || item === null) return;
+      const record = item as Record<string, unknown>;
+      const id = record["id"];
+      const order = record["order"];
+      if (typeof id !== "string") return;
+      orderOf.set(id, typeof order === "number" ? order : position);
+    });
+  }
+
+  const isTray = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" &&
+    value !== null &&
+    // `== null` deliberately: catches both an explicit null and a missing key.
+    (value as Record<string, unknown>)["rowId"] == null;
+
+  const trayIndex = new Map<string, number>();
+  placements
+    .filter(isTray)
+    .map((p) => p["itemId"])
+    .filter((id): id is string => typeof id === "string")
+    .sort((a, b) => (orderOf.get(a) ?? 0) - (orderOf.get(b) ?? 0))
+    .forEach((id, index) => trayIndex.set(id, index));
+
+  return {
+    ...doc,
+    placements: placements.map((p) => {
+      if (!isTray(p)) return p;
+      const id = p["itemId"];
+      if (typeof id !== "string") return p;
+      return { ...p, index: trayIndex.get(id) ?? 0 };
+    }),
+  };
+};
+
+/** Keyed by the version being migrated FROM. */
+const MIGRATIONS: Record<number, Migration> = {
+  1: migrateV1ToV2,
+};
 
 /**
  * Bring a stored document up to the current schema.
@@ -56,9 +110,12 @@ export function migrate(raw: unknown): TierList {
         `No migration registered from schema ${currentVersion} to ${currentVersion + 1}.`,
       );
     }
-    current = step(current);
     currentVersion += 1;
-    current["schemaVersion"] = currentVersion;
+    // Spread rather than assign into `step`'s result: a migration with nothing
+    // to change may legitimately hand its input straight back, and writing the
+    // stamp in place would then land on the caller's object. `migrate()` is
+    // called on request bodies and stored rows; it does not own either.
+    current = { ...step(current), schemaVersion: currentVersion };
   }
 
   return current as unknown as TierList;

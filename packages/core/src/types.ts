@@ -1,4 +1,8 @@
-export const SCHEMA_VERSION = 1;
+/**
+ * 2 — the tray became an ordered location. Schema 1 wrote every tray placement
+ * at `index: 0`, so the tray had no order to preserve.
+ */
+export const SCHEMA_VERSION = 2;
 
 export type TileAspect = "square" | "portrait" | "landscape";
 export type Density = "compact" | "normal" | "roomy";

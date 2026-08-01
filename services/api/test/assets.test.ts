@@ -44,6 +44,10 @@ describe("asset repository", () => {
       height: 50,
       byteSize: 1024,
     });
+    // timestamptz round-trip: this must come back as the same instant, not
+    // shifted by the connection's or the server's timezone.
+    expect(found?.createdAt).toBeInstanceOf(Date);
+    expect(found?.createdAt.getTime()).toBe(NOW.getTime());
   });
 
   it("returns null for an unknown id", async () => {
@@ -63,6 +67,17 @@ describe("asset repository", () => {
     expect(await repository.findAssetByChecksum("owner-2", "abc123")).toBeNull();
   });
 
+  // Guards against a query that filters by owner alone and happens to return
+  // *an* asset of theirs rather than the one with these exact bytes.
+  it("does not find the same owner's asset under a different checksum", async () => {
+    await repository.createAsset(asset());
+    await repository.createAsset(
+      asset({ id: "asset-2", storageKey: "assets/asset-2", checksum: "different" }),
+    );
+    expect(await repository.findAssetByChecksum("owner-1", "not-a-real-checksum")).toBeNull();
+    expect((await repository.findAssetByChecksum("owner-1", "different"))?.id).toBe("asset-2");
+  });
+
   it("lets two owners hold identical bytes as separate assets", async () => {
     await repository.createAsset(asset());
     await repository.createAsset(
@@ -70,5 +85,30 @@ describe("asset repository", () => {
     );
     expect((await repository.findAssetByChecksum("owner-1", "abc123"))?.id).toBe("asset-1");
     expect((await repository.findAssetByChecksum("owner-2", "abc123"))?.id).toBe("asset-2");
+  });
+
+  // createAsset does no conflict handling, so the only thing standing between
+  // a raced double-upload and two rows for the same bytes is this unique
+  // index rejecting the second insert outright. The route is expected to
+  // check findAssetByChecksum first, so this only fires under a genuine race
+  // — pinned here so a future refactor can't silently turn it into a second
+  // row instead of a rejection.
+  it("rejects a second asset from the same owner with the same checksum", async () => {
+    await repository.createAsset(asset());
+
+    let caught: unknown;
+    try {
+      await repository.createAsset(asset({ id: "asset-2", storageKey: "assets/asset-2" }));
+    } catch (e) {
+      caught = e;
+    }
+
+    // Drizzle wraps the driver error, so the useful detail — the Postgres
+    // unique_violation code and the constraint name — lives on `.cause`, not
+    // on the thrown error's own message.
+    expect(caught).toBeDefined();
+    const cause = (caught as { cause?: { code?: string; constraint?: string } }).cause;
+    expect(cause?.code).toBe("23505");
+    expect(cause?.constraint).toBe("assets_owner_checksum_idx");
   });
 });

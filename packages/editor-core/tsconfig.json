@@ -1,0 +1,39 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+
+    // This package is pure logic: no Skia, no React, no DOM. The three
+    // settings below are what make "no DOM" a compile error rather than a
+    // convention. All three are load-bearing -- dropping any one of them
+    // silently reopens the hole. That was established by experiment, not by
+    // reading the docs.
+    //
+    //   lib    omits "DOM", so DOM *values* (window, document) are unbound.
+    //          On its own this is not enough: it blocks values but not types.
+    //
+    //   jsx    the base config sets "react-jsx", which makes tsc inject an
+    //          implicit `import "react/jsx-runtime"` into EVERY .ts file in
+    //          the program -- including files containing no JSX. That drags in
+    //          @types/react, whose global.d.ts declares empty stand-ins for
+    //          HTMLCanvasElement, Element, Document and friends so that React
+    //          Native projects can compile under --lib ES6. The side effect
+    //          here is that DOM *type* names resolve again. "preserve" does
+    //          not use the jsx-runtime import.
+    //
+    //   types  with jsx fixed, @types/react still arrives as an automatic type
+    //          library, because nodeLinker: hoisted puts it in the root
+    //          node_modules/@types, which tsc includes by default even though
+    //          this package never declares React. Emptying the list stops
+    //          that. Nothing here needs ambient types -- the vitest import in
+    //          test/ resolves through vitest's own shipped types, not @types.
+    //
+    // Regression check: adding `export type X = HTMLCanvasElement` to src/
+    // must fail with TS2304, and `export const y = typeof document` with
+    // TS2584. Both errors appear only when all three settings are present.
+    "lib": ["ES2022"],
+    "jsx": "preserve",
+    "types": []
+  },
+  "include": ["src", "test"]
+}

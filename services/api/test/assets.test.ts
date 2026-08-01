@@ -190,6 +190,15 @@ describe("POST /assets", () => {
     expect(res.status).toBe(413);
   });
 
+  // The cap is a ceiling, not an exclusive bound: exactly 10MB is a legitimate
+  // upload and must not be rejected by an off-by-one on the comparison.
+  it("accepts an upload exactly at the size cap", async () => {
+    const atCap = new Uint8Array(10 * 1024 * 1024);
+    atCap.set(pngBytes(4, 4), 0);
+    const res = await upload(atCap);
+    expect(res.status).toBe(201);
+  });
+
   it("rejects an unauthenticated upload", async () => {
     const res = await upload(pngBytes(4, 4), "image/png", "");
     expect(res.status).toBe(401);
@@ -230,6 +239,33 @@ describe("POST /assets", () => {
     expect(await createRepository(testDb.db).findAsset(id)).not.toBeNull();
   });
 
+  // Mutation-tested: swapping the order of store.put and createAsset (bytes
+  // after the row instead of before) does not fail any other test in this
+  // file, because none of them inject a store that can fail. This one does,
+  // so the invariant has a test standing guard over it.
+  it("does not leave an asset row behind when writing the bytes fails", async () => {
+    const failingStore: ObjectStore = {
+      async put() {
+        throw new Error("simulated store failure");
+      },
+      get: store.get,
+    };
+    const failingApp = buildApp({ repository: createRepository(testDb.db), store: failingStore });
+
+    const res = await failingApp.request("/assets", {
+      method: "POST",
+      headers: { "content-type": "image/png", authorization: `Bearer ${token}` },
+      body: pngBytes(6, 6),
+    });
+
+    // However the failure surfaces, a torn write must not leave a row
+    // pointing at bytes that were never stored — that row would render as a
+    // permanently broken tile forever, since nothing ever retries a put.
+    expect(res.status).toBe(500);
+    const rows = await testDb.db.execute("select count(*)::int as count from assets");
+    expect(rows.rows[0]).toMatchObject({ count: 0 });
+  });
+
   it("serves the bytes back with the sniffed content type", async () => {
     const { id } = (await (await upload(jpegBytes(30, 20))).json()) as { id: string };
     const res = await app.request(`/assets/${id}`);
@@ -238,6 +274,15 @@ describe("POST /assets", () => {
     expect(Array.from(new Uint8Array(await res.arrayBuffer()))).toEqual(
       Array.from(jpegBytes(30, 20)),
     );
+  });
+
+  // The Response constructor does not compute this on its own from a
+  // Uint8Array body in this runtime — it must be set explicitly, or a client
+  // reading the stream has no way to know when the image ends.
+  it("sets content-length to the actual byte count", async () => {
+    const { id } = (await (await upload(pngBytes(30, 20))).json()) as { id: string };
+    const res = await app.request(`/assets/${id}`);
+    expect(res.headers.get("content-length")).toBe("24");
   });
 
   // Sharing a list is the product, so its images cannot need the author's token.

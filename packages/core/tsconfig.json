@@ -2,7 +2,45 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "lib": ["ES2022"]
+
+    // @tl/core is pure: no UI, no I/O, no platform APIs. The three settings
+    // below are what turn that from a convention into a compile error. All
+    // three are load-bearing -- dropping any one silently reopens the hole.
+    // Established by experiment, not by reading the docs.
+    //
+    //   lib    omits "DOM", so DOM *values* (window, document) are unbound.
+    //          On its own this is NOT enough: it blocks values but not types.
+    //          `export type X = HTMLCanvasElement` compiled clean here until
+    //          the other two settings were added.
+    //
+    //   jsx    the base config sets "react-jsx", which makes tsc inject an
+    //          implicit `import "react/jsx-runtime"` into EVERY .ts file in
+    //          the program -- including files containing no JSX. That drags in
+    //          @types/react, whose global.d.ts declares empty stand-ins for
+    //          HTMLCanvasElement, Element, Document and friends so that React
+    //          Native projects can compile under --lib ES6. The side effect
+    //          here is that DOM *type* names resolve again. "preserve" does
+    //          not use the jsx-runtime import. The base config keeps
+    //          "react-jsx" because apps/web and apps/mobile need it; this is
+    //          the correct place to opt out.
+    //
+    //   types  with jsx fixed, @types/react still arrives as an automatic type
+    //          library, because nodeLinker: hoisted puts it in the root
+    //          node_modules/@types, which tsc includes by default even though
+    //          this package never declares React. Emptying the list stops
+    //          that. Nothing here needs ambient types: src/ and test/ use no
+    //          node APIs, and the vitest import in test/ resolves through
+    //          vitest's own shipped types rather than @types. If a future
+    //          test needs node builtins, prefer keeping them out of @tl/core
+    //          over setting "types": ["node"] -- that reopens the @types/react
+    //          path too, since it re-enables automatic type library lookup.
+    //
+    // Regression check: adding `export type X = HTMLCanvasElement` to src/
+    // must fail with TS2304, and `export const y = typeof document` with
+    // TS2584. Both appear only when all three settings are present.
+    "lib": ["ES2022"],
+    "jsx": "preserve",
+    "types": []
   },
   "include": ["src", "test"]
 }

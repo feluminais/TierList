@@ -49,16 +49,31 @@ export function panCrop(crop: Crop, delta: Point): Crop {
  * samples pixels which do not exist.
  */
 export function zoomCrop(crop: Crop, factor: number, anchor: Point): Crop {
-  const aspect = crop.h / crop.w;
+  // One scale applied to both axes at once, rather than clamping `w` and
+  // deriving `h` from it (or vice versa). Deriving one axis from the other's
+  // already-clamped value lets the derived axis blow *past* its own bound:
+  // when a very wide crop (say h/w = 0.01) zooms in far enough that `w`
+  // floors at MIN_CROP, `h` floors too, and `h`'s own required companion
+  // `h / aspect` comes out above 1 — the crop then runs off the source's
+  // right edge with an aspect ratio that still checks out. A uniform scale
+  // keeps both axes in lockstep, so this cannot happen: whatever scale is
+  // chosen applies identically to `w` and `h`, and the scale itself is
+  // clamped, once, against both axes' bounds before either is computed.
+  const scaleMin = Math.max(MIN_CROP / crop.w, MIN_CROP / crop.h);
+  const scaleMax = Math.min(1 / crop.w, 1 / crop.h);
+  // scaleMin can exceed scaleMax only when the crop's own aspect ratio is so
+  // extreme that no single scale keeps both axes inside [MIN_CROP, 1] at
+  // once — a fixed floor is not the same fraction of a wide axis and a
+  // narrow one. Every aspect `defaultCropFor` can produce (0.75, 1, 1.33) is
+  // nowhere near this, so it can only be reached via a hand-edited or
+  // corrupted document. Staying inside the source wins in that case, for the
+  // same reason the anchor gives way below: a crop that samples outside the
+  // image is a worse outcome than one that is smaller than the usual floor.
+  const scale =
+    scaleMin > scaleMax ? scaleMax : clamp(1 / factor, scaleMin, scaleMax);
 
-  // Both axes scale by the same amount, so the aspect lock survives by
-  // construction rather than by being re-imposed afterwards.
-  const w = clamp(crop.w / factor, MIN_CROP, 1);
-  // Derived from w rather than scaled independently: floating-point drift
-  // between two separate divisions is exactly how an aspect lock rots.
-  const h = clamp(w * aspect, MIN_CROP, 1);
-  // If h hit a bound, w has to follow or the ratio breaks.
-  const width = h === w * aspect ? w : h / aspect;
+  const width = crop.w * scale;
+  const h = crop.h * scale;
 
   // Keep the anchor's position within the crop constant, then clamp into range.
   const fractionX = crop.w === 0 ? 0.5 : (anchor.x - crop.x) / crop.w;

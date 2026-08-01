@@ -38,6 +38,24 @@ describe("PUT /lists/:id", () => {
     });
   });
 
+  it("returns 409 when the id already exists", async () => {
+    const doc = createTierList({ id: "list-1", now: NOW, title: "Ramen" });
+    expect((await put(doc)).status).toBe(201);
+
+    const second = createTierList({
+      id: "list-1",
+      now: NOW,
+      title: "Overwritten",
+    });
+    const res = await put(second);
+    expect(res.status).toBe(409);
+
+    const loaded = await app.request("/lists/list-1");
+    await expect(loaded.json()).resolves.toMatchObject({
+      document: { title: "Ramen" },
+    });
+  });
+
   it("rejects a body that is not a tier list", async () => {
     const res = await app.request("/lists/list-1", {
       method: "PUT",

@@ -6,7 +6,13 @@ import { tierLists, type NewTierListRow } from "./schema";
 type Db = ReturnType<typeof drizzle>;
 
 export interface Repository {
-  save: (doc: TierList) => Promise<void>;
+  /**
+   * Inserts a new document. Returns false, changing nothing, when the id is
+   * already taken. Deliberately not an upsert: an overwriting create would be
+   * a way to clobber a document without presenting a revision, which is
+   * exactly what `update` exists to prevent.
+   */
+  create: (doc: TierList) => Promise<boolean>;
   load: (id: string) => Promise<TierList | null>;
   update: (doc: TierList, expectedRevision: number) => Promise<void>;
 }
@@ -41,12 +47,14 @@ export class RevisionConflictError extends Error {
 
 export function createRepository(db: Db): Repository {
   return {
-    async save(doc) {
-      const row = toRow(doc);
-      await db
+    async create(doc) {
+      const inserted = await db
         .insert(tierLists)
-        .values(row)
-        .onConflictDoUpdate({ target: tierLists.id, set: row });
+        .values(toRow(doc))
+        .onConflictDoNothing({ target: tierLists.id })
+        .returning({ id: tierLists.id });
+
+      return inserted.length > 0;
     },
 
     async load(id) {

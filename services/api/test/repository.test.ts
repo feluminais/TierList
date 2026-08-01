@@ -23,10 +23,10 @@ afterEach(async () => {
   await ctx.close();
 });
 
-describe("save and load", () => {
+describe("create and load", () => {
   it("round-trips a document unchanged", async () => {
     const doc = createTierList({ id: "list-1", now: NOW, title: "Ramen" });
-    await repo.save(doc);
+    expect(await repo.create(doc)).toBe(true);
 
     const loaded = await repo.load("list-1");
     expect(loaded).toEqual(doc);
@@ -43,7 +43,7 @@ describe("save and load", () => {
       title: "Ramen",
       authorId: "user-1",
     });
-    await repo.save(doc);
+    await repo.create(doc);
 
     const rows = await ctx.db.execute(
       "select title, author_id, revision, schema_version from tier_lists where id = 'list-1'",
@@ -56,24 +56,27 @@ describe("save and load", () => {
     });
   });
 
-  it("keeps projected columns in step with the document on re-save", async () => {
-    let doc = createTierList({ id: "list-1", now: NOW, title: "Ramen" });
-    await repo.save(doc);
+  // create() must never be a back door around the revision check in update().
+  it("refuses to overwrite an existing id and leaves the stored document untouched", async () => {
+    const first = createTierList({ id: "list-1", now: NOW, title: "Ramen" });
+    expect(await repo.create(first)).toBe(true);
 
-    doc = reduce(doc, { type: "meta/set", patch: { title: "Tonkotsu" } }, NOW);
-    await repo.save(doc);
+    const second = createTierList({
+      id: "list-1",
+      now: NOW,
+      title: "Overwritten",
+    });
+    expect(await repo.create(second)).toBe(false);
 
-    const rows = await ctx.db.execute(
-      "select title, revision from tier_lists where id = 'list-1'",
-    );
-    expect(rows.rows[0]).toMatchObject({ title: "Tonkotsu", revision: 1 });
+    const loaded = await repo.load("list-1");
+    expect(loaded).toEqual(first);
   });
 });
 
 describe("update with optimistic concurrency", () => {
   it("accepts an update whose expected revision matches", async () => {
     const doc = createTierList({ id: "list-1", now: NOW });
-    await repo.save(doc);
+    await repo.create(doc);
 
     const next = reduce(
       doc,
@@ -87,9 +90,26 @@ describe("update with optimistic concurrency", () => {
     expect(loaded?.revision).toBe(1);
   });
 
+  it("keeps projected columns in step with the document", async () => {
+    const doc = createTierList({ id: "list-1", now: NOW, title: "Ramen" });
+    await repo.create(doc);
+
+    const next = reduce(
+      doc,
+      { type: "meta/set", patch: { title: "Tonkotsu" } },
+      NOW,
+    );
+    await repo.update(next, 0);
+
+    const rows = await ctx.db.execute(
+      "select title, revision from tier_lists where id = 'list-1'",
+    );
+    expect(rows.rows[0]).toMatchObject({ title: "Tonkotsu", revision: 1 });
+  });
+
   it("rejects an update whose expected revision is stale", async () => {
     const doc = createTierList({ id: "list-1", now: NOW });
-    await repo.save(doc);
+    await repo.create(doc);
 
     const a = reduce(doc, { type: "meta/set", patch: { title: "A" } }, NOW);
     await repo.update(a, 0);
@@ -102,7 +122,7 @@ describe("update with optimistic concurrency", () => {
 
   it("leaves the stored document untouched when it rejects", async () => {
     const doc = createTierList({ id: "list-1", now: NOW });
-    await repo.save(doc);
+    await repo.create(doc);
     const a = reduce(doc, { type: "meta/set", patch: { title: "A" } }, NOW);
     await repo.update(a, 0);
 

@@ -30,7 +30,8 @@ export function createRoutes(deps: RouteDeps) {
     if (!doc) return c.json({ error: "invalid document" }, 400);
     if (doc.id !== id) return c.json({ error: "id mismatch" }, 400);
 
-    await deps.repository.save(doc);
+    const created = await deps.repository.create(doc);
+    if (!created) return c.json({ error: "already exists" }, 409);
     return c.json({ id: doc.id, revision: doc.revision }, 201);
   });
 

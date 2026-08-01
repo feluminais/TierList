@@ -6,10 +6,17 @@ export interface DeriveParams {
   authorId?: string;
 }
 
+/**
+ * Put every item in the tray, numbered `0..n-1` by the item's own `order`.
+ *
+ * The source document's placements cannot supply that order, even though some
+ * of them are already tray placements: the items sitting in rows carry row
+ * indices, which collide with the tray's and with each other once every item
+ * is pooled into one location. `order` is the only ordering the source defines
+ * across all items regardless of where each currently sits — and being the
+ * item's own field, it does not depend on how a caller arranged the array.
+ */
 function trayPlacements(doc: TierList): Placement[] {
-  // Sorted by `order` rather than trusting array position: the tray's indices
-  // are what the editor lays out by, so they must not depend on how a caller
-  // happened to arrange the items array.
   return [...doc.items]
     .sort((a, b) => a.order - b.order)
     .map((item, index) => ({ itemId: item.id, rowId: null, index }));

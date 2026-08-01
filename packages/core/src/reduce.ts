@@ -16,10 +16,7 @@ function trayCount(placements: Placement[]): number {
 
 /**
  * Close the hole a placement left behind, so indices stay contiguous within
- * every location. `placements` must already exclude the vacated placement.
- *
- * `row/remove` deliberately does not use this: it relocates a whole row at
- * once rather than shifting around a single hole.
+ * its location. `placements` must already exclude the vacated placement.
  */
 function closeGap(placements: Placement[], vacated: Placement): Placement[] {
   return placements.map((p) =>
@@ -66,7 +63,9 @@ function apply(doc: TierList, action: TierListAction): TierList {
       const kept = doc.placements.filter((p) => p.rowId !== action.rowId);
       // The row's items go to the end of the tray in the order they held, the
       // same destination `placement/unplace` uses, and numbered from the tray's
-      // current length so its indices stay contiguous.
+      // current length so its indices stay contiguous. Not `closeGap`: that
+      // closes a single hole where it finds it, whereas removing a row empties
+      // one location outright and renumbers its items into a different one.
       const trayBase = trayCount(kept);
       const returned = doc.placements
         .filter((p) => p.rowId === action.rowId)
@@ -161,25 +160,35 @@ function apply(doc: TierList, action: TierListAction): TierList {
       const others = doc.placements.filter((p) => p.itemId !== action.itemId);
 
       // Close the gap the item leaves behind, so indices stay contiguous
-      // within every location. Only when the location actually changes: a
-      // move within one location is already handled by the splice and
-      // renumber below, and resettling first would shift it twice.
-      const resettled =
+      // within every location. Skipped when the item is not changing location,
+      // purely to save the work: there, every index `closeGap` would touch is
+      // in the target set, which the renumber below overwrites wholesale.
+      const remaining =
         current && current.rowId !== action.rowId
           ? closeGap(others, current)
           : others;
 
-      const inTarget = resettled
+      const inTarget = remaining
         .filter((p) => p.rowId === action.rowId)
         .sort((a, b) => a.index - b.index);
       const target = clamp(action.index, 0, inTarget.length);
+
+      // Already exactly there: a genuine no-op, so return the same reference
+      // and let reduce() skip the revision bump. Compared after clamping,
+      // because an out-of-range index names the same slot as the last one.
+      const alreadyThere =
+        current !== undefined &&
+        current.rowId === action.rowId &&
+        current.index === target;
+      if (alreadyThere) return doc;
+
       inTarget.splice(target, 0, {
         itemId: action.itemId,
         rowId: action.rowId,
         index: target,
       });
       const renumbered = inTarget.map((p, i) => ({ ...p, index: i }));
-      const untouched = resettled.filter((p) => p.rowId !== action.rowId);
+      const untouched = remaining.filter((p) => p.rowId !== action.rowId);
       return { ...doc, placements: [...untouched, ...renumbered] };
     }
 

@@ -140,6 +140,37 @@ describe("placement/place", () => {
     expect(doc.placements[0]).toMatchObject({ rowId: A, index: 0 });
   });
 
+  it("treats placing an item where it already is as a no-op", () => {
+    let doc = withItems(["i1", "i2", "i3"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: S, index: 0 }, NOW);
+    const same = reduce(doc, { type: "placement/place", itemId: "i2", rowId: S, index: 0 }, NOW);
+    expect(same).toBe(doc);
+  });
+
+  it("treats an out-of-range index that clamps onto the current slot as a no-op", () => {
+    let doc = withItems(["i1", "i2"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: S, index: 0 }, NOW);
+    // i1 is alone in S, so any index past the end clamps back onto where it is.
+    const same = reduce(doc, { type: "placement/place", itemId: "i1", rowId: S, index: 99 }, NOW);
+    expect(same).toBe(doc);
+  });
+
+  it("still reorders when asked for a different slot in the same row", () => {
+    let doc = withItems(["i1", "i2", "i3"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: S, index: 0 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: S, index: 1 }, NOW);
+    const before = doc;
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: S, index: 1 }, NOW);
+
+    expect(doc).not.toBe(before);
+    expect(doc.revision).toBe(before.revision + 1);
+    const inS = doc.placements
+      .filter((p) => p.rowId === S)
+      .sort((a, b) => a.index - b.index);
+    expect(inS.map((p) => p.itemId)).toEqual(["i2", "i1"]);
+    expect(inS.map((p) => p.index)).toEqual([0, 1]);
+  });
+
   it("clamps an out-of-range index to the end of the row", () => {
     let doc = withItems(["i1", "i2"]);
     doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: S, index: 0 }, NOW);
@@ -200,6 +231,26 @@ describe("the tray is an ordered location", () => {
       .sort((a, b) => a.index - b.index);
     expect(tray.map((p) => p.itemId)).toEqual(["i1", "i3", "i2"]);
     expect(tray.map((p) => p.index)).toEqual([0, 1, 2]);
+  });
+
+  it("moves an item from a row into a chosen tray index, closing the row gap", () => {
+    let doc = withItems(["i1", "i2", "i3", "i4"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: S, index: 0 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i3", rowId: S, index: 1 }, NOW);
+    // Tray is now [i1, i4]; bring i2 back to the front of it, not the end.
+    doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: null, index: 0 }, NOW);
+
+    const tray = doc.placements
+      .filter((p) => p.rowId === null)
+      .sort((a, b) => a.index - b.index);
+    expect(tray.map((p) => p.itemId)).toEqual(["i2", "i1", "i4"]);
+    expect(tray.map((p) => p.index)).toEqual([0, 1, 2]);
+
+    const inS = doc.placements
+      .filter((p) => p.rowId === S)
+      .sort((a, b) => a.index - b.index);
+    expect(inS.map((p) => p.itemId)).toEqual(["i3"]);
+    expect(inS.map((p) => p.index)).toEqual([0]);
   });
 
   it("treats unplacing an item already in the tray as a no-op", () => {

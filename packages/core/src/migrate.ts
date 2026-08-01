@@ -20,6 +20,16 @@ type Migration = (doc: Record<string, unknown>) => Record<string, unknown>;
  */
 const MIGRATIONS: Record<number, Migration> = {};
 
+/**
+ * Bring a stored document up to the current schema.
+ *
+ * Structural validation is a known gap: this checks `schemaVersion` and
+ * nothing else, so a document violating a model invariant — a holed set of
+ * placement indices, say — survives the cast at the end. That is deliberate
+ * for now rather than an oversight elsewhere: `reduce()` trusts its input (see
+ * the `Placement` docblock), which makes this function, not the reducer, the
+ * right home for such checks when they get built.
+ */
 export function migrate(raw: unknown): TierList {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new Error("Value is not a tier list document.");

@@ -39,7 +39,21 @@ export interface Item {
   order: number;
 }
 
-/** rowId null means the item is still in the tray, unranked. */
+/**
+ * Where an item sits. `rowId` null means the tray, unranked — but the tray is
+ * an ordered location like any row, not a bag.
+ *
+ * Invariant: within each location — every row, and the tray — the `index`
+ * values are contiguous `0..n-1`, with no holes and no duplicates. Consumers
+ * may therefore read `index` as a position and lay a location out by it
+ * directly, not merely sort by it.
+ *
+ * `reduce()` maintains that invariant but never checks it: @tl/core is a pure
+ * model, and validating an untrusted document is a boundary concern. Its home
+ * is `migrate()`, which `services/api` already treats as the sole authority on
+ * what a valid document is. Until that validation exists, a document that
+ * arrives holed stays holed — the reducer trusts its input.
+ */
 export interface Placement {
   itemId: string;
   rowId: string | null;

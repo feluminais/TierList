@@ -31,6 +31,27 @@ export function defaultCropFor(
   source: SourceSize,
   tileAspect: number,
 ): ImageEdit["crop"] {
+  // A source with a zero or non-finite dimension, or a non-finite
+  // `tileAspect`, drives `sourceAspect` to `NaN` or `Infinity / Infinity`
+  // (also `NaN`) — which then survives every `>` comparison below (always
+  // false against `NaN`) and comes out the other side as a crop with `NaN`
+  // fields. `migrate()` performs no structural validation, so a document can
+  // reach this function with any source size at all; failing loudly here,
+  // the same way `imagePlacement` refuses a rotation it cannot honour, is
+  // what stops a `NaN` crop from being written to the document and silently
+  // breaking every placement computed from it afterwards.
+  if (
+    !(source.width > 0) ||
+    !(source.height > 0) ||
+    !(tileAspect > 0) ||
+    !Number.isFinite(tileAspect)
+  ) {
+    throw new Error(
+      `defaultCropFor requires a positive, finite source size and tileAspect ` +
+        `(got source=${JSON.stringify(source)}, tileAspect=${tileAspect})`,
+    );
+  }
+
   const sourceAspect = source.height / source.width;
 
   // The source is taller than the tile wants, so height is the constrained
@@ -89,8 +110,19 @@ export function imagePlacement(
 
   // Clamped rather than trusted: `migrate()` does not validate structure, so a
   // stored document can carry a crop that runs off the edge of its own image.
-  const x = clamp(edit.crop.x, 0, 1) * source.width;
-  const y = clamp(edit.crop.y, 0, 1) * source.height;
+  //
+  // `x`/`y` are pulled back from the far edge by `MIN_SOURCE_PX`, not just
+  // clamped to `[0, source.width]`. A crop with `x: 1` clamps to exactly
+  // `source.width`, leaving zero room before the edge — the `MIN_SOURCE_PX`
+  // floor below would then push `width` to 1 with nowhere for it to go,
+  // sampling one pixel past the source's right edge. Reserving the floor's
+  // width when placing `x` keeps every placement this function returns
+  // entirely inside the source, which is the invariant the floor exists to
+  // protect in the first place.
+  const rawX = clamp(edit.crop.x, 0, 1) * source.width;
+  const rawY = clamp(edit.crop.y, 0, 1) * source.height;
+  const x = Math.min(rawX, Math.max(0, source.width - MIN_SOURCE_PX));
+  const y = Math.min(rawY, Math.max(0, source.height - MIN_SOURCE_PX));
   const width = Math.max(
     MIN_SOURCE_PX,
     Math.min(clamp(edit.crop.w, 0, 1) * source.width, source.width - x),

@@ -62,6 +62,41 @@ describe("defaultCropFor", () => {
       }
     }
   });
+
+  // migrate() performs no structural validation, so a document can carry an
+  // item whose source metadata is empty, missing, or corrupted. Without a
+  // guard, `sourceAspect` becomes NaN or Infinity/Infinity (also NaN), and
+  // every `>` comparison against NaN is false, so the function falls through
+  // to the `else` branch and returns a crop with NaN fields — a bad value
+  // that would otherwise sit silently in the document until something tried
+  // to render it.
+  describe("degenerate input", () => {
+    it("refuses a zero-width source", () => {
+      expect(() => defaultCropFor({ width: 0, height: 100 }, 1)).toThrow();
+    });
+
+    it("refuses a zero-height source", () => {
+      expect(() => defaultCropFor({ width: 100, height: 0 }, 1)).toThrow();
+    });
+
+    it("refuses a zero-width and zero-height source", () => {
+      expect(() => defaultCropFor({ width: 0, height: 0 }, 1)).toThrow();
+    });
+
+    it("refuses a NaN source dimension", () => {
+      expect(() => defaultCropFor({ width: NaN, height: 100 }, 1)).toThrow();
+      expect(() => defaultCropFor({ width: 100, height: NaN }, 1)).toThrow();
+    });
+
+    it("refuses a tileAspect of 0", () => {
+      expect(() => defaultCropFor({ width: 100, height: 100 }, 0)).toThrow();
+    });
+
+    it("refuses a non-finite tileAspect", () => {
+      expect(() => defaultCropFor({ width: 100, height: 100 }, Infinity)).toThrow();
+      expect(() => defaultCropFor({ width: 100, height: 100 }, NaN)).toThrow();
+    });
+  });
 });
 
 describe("imagePlacement", () => {
@@ -111,6 +146,24 @@ describe("imagePlacement", () => {
     const placement = imagePlacement(source, editWith({ x: 0, y: 0, w: 0, h: 0 }), TILE);
     expect(placement.source.width).toBeGreaterThan(0);
     expect(placement.source.height).toBeGreaterThan(0);
+  });
+
+  // crop.x clamps to exactly 1 (the far edge), leaving zero room before the
+  // source's right edge. The MIN_SOURCE_PX floor on width would then have
+  // nowhere to fit without x itself giving way — without that, the returned
+  // rect samples one pixel past a source that is only 100px wide.
+  it("keeps a crop pinned to the far edge entirely inside the source", () => {
+    const source: SourceSize = { width: 100, height: 100 };
+    const placement = imagePlacement(source, editWith({ x: 1, y: 1, w: 0.5, h: 0.5 }), TILE);
+    expect(placement.source.x + placement.source.width).toBeLessThanOrEqual(100);
+    expect(placement.source.y + placement.source.height).toBeLessThanOrEqual(100);
+  });
+
+  it("keeps a crop.x beyond 1 entirely inside the source", () => {
+    const source: SourceSize = { width: 100, height: 100 };
+    const placement = imagePlacement(source, editWith({ x: 1.5, y: 1.5, w: 0.5, h: 0.5 }), TILE);
+    expect(placement.source.x + placement.source.width).toBeLessThanOrEqual(100);
+    expect(placement.source.y + placement.source.height).toBeLessThanOrEqual(100);
   });
 
   // rotation is deliberately unimplemented in Milestone 3A. It must fail

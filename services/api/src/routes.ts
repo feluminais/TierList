@@ -186,5 +186,35 @@ export function createRoutes(deps: RouteDeps) {
     );
   });
 
+  /**
+   * Deliberately unauthenticated, for the same reason `GET /lists/:id` is: an
+   * asset referenced by a public document has to be publicly readable, or every
+   * shared list renders as broken images.
+   */
+  routes.get("/assets/:id", async (c) => {
+    const row = await deps.repository.findAsset(c.req.param("id"));
+    if (!row) return c.json({ error: "not found" }, 404);
+
+    const object = await deps.store.get(row.storageKey);
+    // A row without bytes is a broken invariant, not a client error — uploads
+    // write bytes before the row. Reporting 404 keeps a torn write from
+    // presenting as a 500 to every viewer of a shared list.
+    if (!object) return c.json({ error: "not found" }, 404);
+
+    // A plain Response rather than `c.body`: a Uint8Array is already a valid
+    // BodyInit, and going through Hono's helper only adds a cast to satisfy its
+    // narrower parameter type.
+    return new Response(object.bytes, {
+      status: 200,
+      headers: {
+        "content-type": object.contentType,
+        "content-length": String(object.bytes.byteLength),
+        // An asset id names one immutable byte string for good — nothing ever
+        // rewrites a storage key — so a cache never needs to revalidate.
+        "cache-control": "public, max-age=31536000, immutable",
+      },
+    });
+  });
+
   return routes;
 }

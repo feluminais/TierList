@@ -206,4 +206,46 @@ describe("POST /assets", () => {
     expect((await upload(pngBytes(9, 9))).status).toBe(200);
   });
 
+  it("serves the bytes back with the sniffed content type", async () => {
+    const { id } = (await (await upload(jpegBytes(30, 20))).json()) as { id: string };
+    const res = await app.request(`/assets/${id}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(Array.from(new Uint8Array(await res.arrayBuffer()))).toEqual(
+      Array.from(jpegBytes(30, 20)),
+    );
+  });
+
+  // Sharing a list is the product, so its images cannot need the author's token.
+  it("serves an asset without any token at all", async () => {
+    const { id } = (await (await upload(pngBytes(5, 5))).json()) as { id: string };
+    expect((await app.request(`/assets/${id}`)).status).toBe(200);
+  });
+
+  it("404s an unknown asset id", async () => {
+    expect((await app.request("/assets/does-not-exist")).status).toBe(404);
+  });
+
+  // An id names one immutable byte string forever, so a cache never has to
+  // revalidate. This is the whole reason storage keys are never reused.
+  it("marks the response immutable", async () => {
+    const { id } = (await (await upload(pngBytes(5, 5))).json()) as { id: string };
+    const res = await app.request(`/assets/${id}`);
+    expect(res.headers.get("cache-control")).toContain("immutable");
+  });
+
+  it("404s a row whose bytes are missing from the store", async () => {
+    await createRepository(testDb.db).createAsset({
+      id: "orphan",
+      ownerId: "owner-1",
+      storageKey: "assets/orphan",
+      contentType: "image/png",
+      byteSize: 10,
+      width: 1,
+      height: 1,
+      checksum: "deadbeef",
+      createdAt: NOW,
+    });
+    expect((await app.request("/assets/orphan")).status).toBe(404);
+  });
 });

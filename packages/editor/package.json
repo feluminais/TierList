@@ -1,0 +1,27 @@
+{
+  "name": "@tl/editor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tl/core": "workspace:*",
+    "@tl/editor-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@shopify/react-native-skia": "^2.6.2",
+    "react": "^19.2.3",
+    "react-native": "^0.86.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "typescript": "~5.9.0",
+    "vitest": "^3.0.0"
+  }
+}

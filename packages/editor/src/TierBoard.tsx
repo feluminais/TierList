@@ -51,15 +51,18 @@ export function TierBoard({ doc, width, layout }: TierBoardProps) {
               height={row.labelRect.height}
               color={model?.color ?? BOARD_LINE}
             />
-            {row.tiles.map((tile) => {
+            {row.tiles.map((tile, i) => {
               const item = itemsById.get(tile.itemId);
               // A placement can outlive its item on a document that reached us
               // without passing through the reducer — see the migrate()
               // validation gap in STATE.md. Skip rather than draw a hole.
               if (!item) return null;
               return (
+                // Position is part of the key because migrate() performs no
+                // structural validation, so the same item can appear twice in
+                // one location. A bare itemId would collide there.
                 <Rect
-                  key={tile.itemId}
+                  key={`${tile.itemId}:${i}`}
                   x={tile.rect.x}
                   y={tile.rect.y}
                   width={tile.rect.width}
@@ -79,12 +82,12 @@ export function TierBoard({ doc, width, layout }: TierBoardProps) {
         height={board.tray.rect.height}
         color={BOARD_LINE}
       />
-      {board.tray.tiles.map((tile) => {
+      {board.tray.tiles.map((tile, i) => {
         const item = itemsById.get(tile.itemId);
         if (!item) return null;
         return (
           <Rect
-            key={tile.itemId}
+            key={`${tile.itemId}:${i}`}
             x={tile.rect.x}
             y={tile.rect.y}
             width={tile.rect.width}

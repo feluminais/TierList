@@ -7,10 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "postinstall": "node copy-assets.js",
     "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
     "@shopify/react-native-skia": "2.6.2",
+    "@tl/core": "workspace:*",
+    "@tl/editor": "workspace:*",
     "next": "16.2.12",
     "react": "19.2.3",
     "react-dom": "19.2.3",

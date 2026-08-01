@@ -128,6 +128,27 @@ describe("schema 1 -> 2: contiguous placement indices", () => {
     expect((raw["placements"] as { index: number }[]).map((p) => p.index)).toEqual([5, 9, 2, 3]);
   });
 
+  /**
+   * `typeof [] === "object"`, so a helper narrowing on that alone files an
+   * array as a placement. Two harms: the `{ ...p, index }` spread converts it
+   * to a plain object, and — having no string `rowId` — it is filed into the
+   * tray, where it consumes index 0 and leaves the location's only real
+   * placement starting at 1. Reachable straight from JSON, so from a request
+   * body.
+   */
+  it("leaves an array inside placements alone and lets it consume no index", () => {
+    const doc = migrate({
+      ...createTierList({ id: "list-1", now: NOW }),
+      schemaVersion: 1,
+      items: [{ id: "i1", kind: "text", label: "one", edit: {}, order: 0 }],
+      placements: [["junk"], { itemId: "i1", rowId: null, index: 0 }],
+    });
+
+    expect(Array.isArray(doc.placements[0])).toBe(true);
+    expect(doc.placements[0]).toEqual(["junk"]);
+    expect(doc.placements[1]).toEqual({ itemId: "i1", rowId: null, index: 0 });
+  });
+
   it("stamps the document with the new schema version", () => {
     expect(migrate(v1()).schemaVersion).toBe(SCHEMA_VERSION);
     expect(SCHEMA_VERSION).toBe(2);

@@ -14,8 +14,21 @@ export class SchemaTooNewError extends Error {
 /** A migration takes a document at version N and returns it at version N+1. */
 type Migration = (doc: Record<string, unknown>) => Record<string, unknown>;
 
-/** The tray, as a location key. A row's key is its id, which is a string. */
-const TRAY = Symbol("tray");
+/**
+ * Narrow an untrusted field to a record, or null if it is not one.
+ *
+ * `Array.isArray` is load-bearing, not belt-and-braces: `typeof [] ===
+ * "object"`, so without it an array reached from `JSON.parse` is treated as a
+ * record — spreading it converts it to a plain object, and reading a key off
+ * it yields `undefined` rather than "absent". `migrate()` below applies the
+ * same three-part guard to the document itself; every migration over
+ * `Record<string, unknown>` wants it too, which is why it lives here rather
+ * than inside one of them.
+ */
+const asRecord = (value: unknown): Record<string, unknown> | null =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 
 /**
  * Schema 2's whole content is the contiguity invariant on the `Placement`
@@ -51,10 +64,8 @@ const migrateV1ToV2: Migration = (doc) => {
   const items = doc["items"];
   if (!Array.isArray(placements)) return doc;
 
-  const asRecord = (value: unknown): Record<string, unknown> | null =>
-    typeof value === "object" && value !== null
-      ? (value as Record<string, unknown>)
-      : null;
+  /** The tray, as a location key. A row's key is its id, which is a string. */
+  const TRAY = Symbol("tray");
 
   const orderOf = new Map<string, number>();
   if (Array.isArray(items)) {

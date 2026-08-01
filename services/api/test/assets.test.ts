@@ -295,6 +295,26 @@ describe("POST /assets", () => {
     expect((await app.request("/assets/does-not-exist")).status).toBe(404);
   });
 
+  // A NUL byte is not valid inside a Postgres text value: reaching the query
+  // uncaught raises error 22021, which surfaces as a bare 500 — indistinguishable
+  // from the database actually being broken. An id that cannot possibly exist
+  // must 404 like any other unknown id, not fail differently from every other
+  // impossible id.
+  it("404s an id containing a NUL byte, rather than 500ing", async () => {
+    const res = await app.request(`/assets/${encodeURIComponent("bad\0id")}`);
+    expect(res.status).toBe(404);
+  });
+
+  it("404s an implausibly long id, rather than spending a query on it", async () => {
+    const res = await app.request(`/assets/${"a".repeat(10000)}`);
+    expect(res.status).toBe(404);
+  });
+
+  it("404s a traversal-shaped id", async () => {
+    const res = await app.request(`/assets/${encodeURIComponent("../../etc/passwd")}`);
+    expect(res.status).toBe(404);
+  });
+
   // An id names one immutable byte string forever, so a cache never has to
   // revalidate. This is the whole reason storage keys are never reused.
   it("marks the response immutable", async () => {

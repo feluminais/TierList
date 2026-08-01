@@ -7,7 +7,12 @@ export interface DeriveParams {
 }
 
 function trayPlacements(doc: TierList): Placement[] {
-  return doc.items.map((i) => ({ itemId: i.id, rowId: null, index: 0 }));
+  // Sorted by `order` rather than trusting array position: the tray's indices
+  // are what the editor lays out by, so they must not depend on how a caller
+  // happened to arrange the items array.
+  return [...doc.items]
+    .sort((a, b) => a.order - b.order)
+    .map((item, index) => ({ itemId: item.id, rowId: null, index }));
 }
 
 /**

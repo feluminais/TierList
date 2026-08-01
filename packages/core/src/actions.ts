@@ -15,7 +15,14 @@ export type TierListAction =
   | { type: "item/addImage"; id: string; assetId: string; label?: string }
   | { type: "item/remove"; itemId: string }
   | { type: "item/setEdit"; itemId: string; edit: ImageEdit }
-  | { type: "placement/place"; itemId: string; rowId: string; index: number }
+  // `null` targets the tray. The tray is an ordered location like any row, so
+  // an item can be dropped at a chosen position in it rather than only appended.
+  | {
+      type: "placement/place";
+      itemId: string;
+      rowId: string | null;
+      index: number;
+    }
   | { type: "placement/unplace"; itemId: string }
   | { type: "display/set"; patch: Partial<DisplaySettings> }
   | {

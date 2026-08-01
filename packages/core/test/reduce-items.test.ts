@@ -126,6 +126,70 @@ describe("placement/unplace", () => {
   });
 });
 
+describe("the tray is an ordered location", () => {
+  it("appends new items to the end of the tray instead of stacking them at 0", () => {
+    const doc = withItems(["i1", "i2", "i3"]);
+    const tray = doc.placements
+      .filter((p) => p.rowId === null)
+      .sort((a, b) => a.index - b.index);
+    expect(tray.map((p) => p.itemId)).toEqual(["i1", "i2", "i3"]);
+    expect(tray.map((p) => p.index)).toEqual([0, 1, 2]);
+  });
+
+  it("places an item at a chosen index inside the tray", () => {
+    let doc = withItems(["i1", "i2", "i3"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i3", rowId: null, index: 0 }, NOW);
+
+    const tray = doc.placements
+      .filter((p) => p.rowId === null)
+      .sort((a, b) => a.index - b.index);
+    expect(tray.map((p) => p.itemId)).toEqual(["i3", "i1", "i2"]);
+    expect(tray.map((p) => p.index)).toEqual([0, 1, 2]);
+  });
+
+  it("returns an unplaced item to the end of the tray, not the front", () => {
+    let doc = withItems(["i1", "i2", "i3"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: S, index: 0 }, NOW);
+    doc = reduce(doc, { type: "placement/unplace", itemId: "i2" }, NOW);
+
+    const tray = doc.placements
+      .filter((p) => p.rowId === null)
+      .sort((a, b) => a.index - b.index);
+    expect(tray.map((p) => p.itemId)).toEqual(["i1", "i3", "i2"]);
+    expect(tray.map((p) => p.index)).toEqual([0, 1, 2]);
+  });
+
+  it("treats unplacing an item already in the tray as a no-op", () => {
+    const doc = withItems(["i1"]);
+    expect(reduce(doc, { type: "placement/unplace", itemId: "i1" }, NOW)).toBe(doc);
+  });
+
+  it("keeps tray indices contiguous when an item is dragged out of it", () => {
+    let doc = withItems(["i1", "i2", "i3"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: S, index: 0 }, NOW);
+
+    const tray = doc.placements
+      .filter((p) => p.rowId === null)
+      .sort((a, b) => a.index - b.index);
+    expect(tray.map((p) => p.itemId)).toEqual(["i1", "i3"]);
+    expect(tray.map((p) => p.index)).toEqual([0, 1]);
+  });
+
+  it("closes the gap in the source row when an item moves to another row", () => {
+    let doc = withItems(["i1", "i2", "i3"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: S, index: 0 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: S, index: 1 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i3", rowId: S, index: 2 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: A, index: 0 }, NOW);
+
+    const inS = doc.placements
+      .filter((p) => p.rowId === S)
+      .sort((a, b) => a.index - b.index);
+    expect(inS.map((p) => p.itemId)).toEqual(["i2", "i3"]);
+    expect(inS.map((p) => p.index)).toEqual([0, 1]);
+  });
+});
+
 describe("display/set and meta/set", () => {
   it("patches display settings without clearing the others", () => {
     const doc = reduce(withItems([]), { type: "display/set", patch: { tileSize: 160 } }, NOW);

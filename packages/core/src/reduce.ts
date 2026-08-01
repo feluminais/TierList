@@ -10,6 +10,10 @@ function clamp(n: number, min: number, max: number): number {
   return Math.min(Math.max(n, min), max);
 }
 
+function trayCount(placements: Placement[]): number {
+  return placements.filter((p) => p.rowId === null).length;
+}
+
 function apply(doc: TierList, action: TierListAction): TierList {
   switch (action.type) {
     case "row/add": {
@@ -71,7 +75,11 @@ function apply(doc: TierList, action: TierListAction): TierList {
         edit: defaultImageEdit(),
         order: doc.items.length,
       };
-      const placement: Placement = { itemId: action.id, rowId: null, index: 0 };
+      const placement: Placement = {
+        itemId: action.id,
+        rowId: null,
+        index: trayCount(doc.placements),
+      };
       return {
         ...doc,
         items: [...doc.items, item],
@@ -88,7 +96,11 @@ function apply(doc: TierList, action: TierListAction): TierList {
         edit: defaultImageEdit(),
         order: doc.items.length,
       };
-      const placement: Placement = { itemId: action.id, rowId: null, index: 0 };
+      const placement: Placement = {
+        itemId: action.id,
+        rowId: null,
+        index: trayCount(doc.placements),
+      };
       return {
         ...doc,
         items: [...doc.items, item],
@@ -118,24 +130,43 @@ function apply(doc: TierList, action: TierListAction): TierList {
     }
 
     case "placement/place": {
+      const current = doc.placements.find((p) => p.itemId === action.itemId);
       const others = doc.placements.filter((p) => p.itemId !== action.itemId);
-      const inRow = others
+
+      // Close the gap the item leaves behind, so indices stay contiguous
+      // within every location. Only when the location actually changes: a
+      // move within one location is already handled by the splice and
+      // renumber below, and resettling first would shift it twice.
+      const resettled =
+        current && current.rowId !== action.rowId
+          ? others.map((p) =>
+              p.rowId === current.rowId && p.index > current.index
+                ? { ...p, index: p.index - 1 }
+                : p,
+            )
+          : others;
+
+      const inTarget = resettled
         .filter((p) => p.rowId === action.rowId)
         .sort((a, b) => a.index - b.index);
-      const target = clamp(action.index, 0, inRow.length);
-      inRow.splice(target, 0, {
+      const target = clamp(action.index, 0, inTarget.length);
+      inTarget.splice(target, 0, {
         itemId: action.itemId,
         rowId: action.rowId,
         index: target,
       });
-      const renumbered = inRow.map((p, i) => ({ ...p, index: i }));
-      const untouched = others.filter((p) => p.rowId !== action.rowId);
+      const renumbered = inTarget.map((p, i) => ({ ...p, index: i }));
+      const untouched = resettled.filter((p) => p.rowId !== action.rowId);
       return { ...doc, placements: [...untouched, ...renumbered] };
     }
 
     case "placement/unplace": {
       const current = doc.placements.find((p) => p.itemId === action.itemId);
       if (!current) return doc;
+      // Already in the tray: a genuine no-op, so the reducer returns the same
+      // reference and reduce() skips the revision bump.
+      if (current.rowId === null) return doc;
+
       const others = doc.placements.filter((p) => p.itemId !== action.itemId);
       const resettled = others.map((p) =>
         p.rowId === current.rowId && p.index > current.index
@@ -146,7 +177,10 @@ function apply(doc: TierList, action: TierListAction): TierList {
         ...doc,
         placements: [
           ...resettled,
-          { itemId: action.itemId, rowId: null, index: 0 },
+          // The end of the tray, not the front: returning an item to where the
+          // eye last saw the tray grow is less surprising than shunting every
+          // other tray item along.
+          { itemId: action.itemId, rowId: null, index: trayCount(others) },
         ],
       };
     }

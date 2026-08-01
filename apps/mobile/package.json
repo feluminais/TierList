@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@shopify/react-native-skia": "2.6.2",
+    "@tl/editor-spike": "workspace:*",
     "expo": "^57.0.1",
     "expo-linking": "~57.0.1",
     "expo-router": "~57.0.2",

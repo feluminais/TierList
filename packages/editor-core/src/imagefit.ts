@@ -134,3 +134,35 @@ export function imagePlacement(
 
   return { source: { x, y, width, height }, dest: tile };
 }
+
+/**
+ * Where to draw the **whole** image so that its crop lands exactly on the tile.
+ *
+ * Skia's Image node draws an entire image into a destination rect; it has no
+ * source-rect parameter. Showing a crop therefore means drawing the whole
+ * image scaled up and shifted so the wanted region covers the tile, and letting
+ * the tile's clip discard the rest. This function is that shift.
+ *
+ * The axes scale independently. They are usually equal — the crop is
+ * aspect-locked to the tile — but deriving one from the other would reintroduce
+ * exactly the clamp-then-derive defect that shipped twice in 3A, where a value
+ * computed from an already-constrained one escaped its own bound.
+ */
+export function imageDrawRect(
+  placement: ImagePlacement,
+  size: SourceSize,
+): Rect {
+  if (placement.source.width <= 0 || placement.source.height <= 0) {
+    throw new Error("imageDrawRect: source rect has zero area");
+  }
+
+  const scaleX = placement.dest.width / placement.source.width;
+  const scaleY = placement.dest.height / placement.source.height;
+
+  return {
+    x: placement.dest.x - placement.source.x * scaleX,
+    y: placement.dest.y - placement.source.y * scaleY,
+    width: size.width * scaleX,
+    height: size.height * scaleY,
+  };
+}

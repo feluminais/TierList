@@ -38,6 +38,23 @@ export function toSourcePoint(point: Point, tile: Rect, crop: Crop): Point {
   };
 }
 
+/**
+ * The inverse of `toSourcePoint`: a stored stroke point, back in board space.
+ *
+ * Deliberately unclamped, for the mirror of `toSourcePoint`'s reason. A stroke
+ * drawn before a tighter crop legitimately falls outside it, and clamping would
+ * smear it along the tile's edge instead of letting the renderer clip it away.
+ */
+export function toTilePoint(point: Point, tile: Rect, crop: Crop): Point {
+  if (crop.w <= 0 || crop.h <= 0) {
+    throw new Error("toTilePoint: crop has zero area");
+  }
+  return {
+    x: tile.x + ((point.x - crop.x) / crop.w) * tile.width,
+    y: tile.y + ((point.y - crop.y) / crop.h) * tile.height,
+  };
+}
+
 /** Perpendicular distance from `p` to the line through `a` and `b`. */
 function distanceToLine(p: Point, a: Point, b: Point): number {
   const dx = b.x - a.x;

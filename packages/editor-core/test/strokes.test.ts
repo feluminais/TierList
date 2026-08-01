@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { simplifyPoints, strokeFromPoints, toSourcePoint } from "../src/strokes";
+import { simplifyPoints, strokeFromPoints, toSourcePoint, toTilePoint } from "../src/strokes";
 
 const TILE = { x: 100, y: 50, width: 200, height: 200 };
 const CROP = { x: 0.25, y: 0.25, w: 0.5, h: 0.5 };
@@ -142,5 +142,39 @@ describe("strokeFromPoints", () => {
       0.01,
     );
     expect(stroke.points).toEqual([0, 0, 1, 1]);
+  });
+});
+
+describe("toTilePoint", () => {
+  const TILE = { x: 100, y: 50, width: 200, height: 200 };
+  const CROP = { x: 0.25, y: 0.25, w: 0.5, h: 0.5 };
+
+  it("is the inverse of toSourcePoint", () => {
+    for (const point of [
+      { x: 100, y: 50 },
+      { x: 200, y: 150 },
+      { x: 300, y: 250 },
+      { x: 137, y: 201 },
+    ]) {
+      const round = toTilePoint(toSourcePoint(point, TILE, CROP), TILE, CROP);
+      expect(round.x).toBeCloseTo(point.x, 9);
+      expect(round.y).toBeCloseTo(point.y, 9);
+    }
+  });
+
+  it("maps the crop's top-left to the tile's top-left", () => {
+    expect(toTilePoint({ x: 0.25, y: 0.25 }, TILE, CROP)).toEqual({ x: 100, y: 50 });
+  });
+
+  // A stroke drawn before a tighter crop can legitimately fall outside it. The
+  // renderer clips; this must not clamp, or the stroke would smear along the edge.
+  it("allows a point outside the crop to land outside the tile", () => {
+    const out = toTilePoint({ x: 0, y: 0 }, TILE, CROP);
+    expect(out.x).toBeLessThan(100);
+    expect(out.y).toBeLessThan(50);
+  });
+
+  it("refuses a zero-sized crop rather than dividing by it", () => {
+    expect(() => toTilePoint({ x: 0.5, y: 0.5 }, TILE, { x: 0, y: 0, w: 0, h: 1 })).toThrow(/zero/i);
   });
 });

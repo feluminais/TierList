@@ -1,7 +1,7 @@
 import { defaultImageEdit } from "@tl/core";
 import type { ImageEdit } from "@tl/core";
 import { describe, expect, it } from "vitest";
-import { defaultCropFor, imagePlacement, type SourceSize } from "../src/imagefit";
+import { defaultCropFor, imageDrawRect, imagePlacement, type SourceSize } from "../src/imagefit";
 
 const TILE = { x: 10, y: 20, width: 100, height: 100 };
 
@@ -177,5 +177,80 @@ describe("imagePlacement", () => {
   it("accepts rotation 0", () => {
     const source: SourceSize = { width: 100, height: 100 };
     expect(() => imagePlacement(source, defaultImageEdit(), TILE)).not.toThrow();
+  });
+});
+
+describe("imageDrawRect", () => {
+  const TILE_100 = { x: 0, y: 0, width: 100, height: 100 };
+
+  it("draws the whole image at tile size when the crop is the whole source", () => {
+    const rect = imageDrawRect(
+      { source: { x: 0, y: 0, width: 200, height: 200 }, dest: TILE_100 },
+      { width: 200, height: 200 },
+    );
+    expect(rect).toEqual({ x: 0, y: 0, width: 100, height: 100 });
+  });
+
+  // The crop is the right half column of a 200x200 image, keeping its full
+  // height: 100px wide by 200px tall against a 100x100 tile. The width axis
+  // scales 1:1 (source is already 100px wide) so the whole 200px-wide image
+  // is drawn at width 200; the height axis scales by 0.5 (200 source px into
+  // a 100px tile) so the whole 200px-tall image is drawn at height 100. (The
+  // plan this test was transcribed from asserted height: 200 here, which
+  // fails the corner invariant checked below — the bottom source edge at
+  // y=200 would land at 0 + 200*0.5 = 100, matching the tile's bottom, only
+  // when height is 100.)
+  it("offsets and scales so the crop lands on the tile", () => {
+    const rect = imageDrawRect(
+      { source: { x: 100, y: 0, width: 100, height: 200 }, dest: TILE_100 },
+      { width: 200, height: 200 },
+    );
+    expect(rect).toEqual({ x: -100, y: 0, width: 200, height: 100 });
+  });
+
+  it("honours a tile that is not at the origin", () => {
+    const rect = imageDrawRect(
+      { source: { x: 50, y: 25, width: 50, height: 50 }, dest: { x: 10, y: 20, width: 100, height: 100 } },
+      { width: 100, height: 100 },
+    );
+    // scale is 2 on both axes: the source 50px square becomes the 100px tile.
+    expect(rect).toEqual({ x: 10 - 100, y: 20 - 50, width: 200, height: 200 });
+  });
+
+  it("scales the axes independently when the crop is not the tile's shape", () => {
+    const rect = imageDrawRect(
+      { source: { x: 0, y: 0, width: 200, height: 100 }, dest: { x: 0, y: 0, width: 100, height: 100 } },
+      { width: 200, height: 100 },
+    );
+    expect(rect).toEqual({ x: 0, y: 0, width: 100, height: 100 });
+  });
+
+  // The invariant that matters: whatever the numbers, the crop's corners must
+  // land exactly on the tile's corners.
+  it("puts the crop's corners on the tile's corners, for any input", () => {
+    const cases = [
+      [{ x: 0, y: 0, width: 640, height: 480 }, { width: 640, height: 480 }],
+      [{ x: 13, y: 97, width: 200, height: 150 }, { width: 1920, height: 1080 }],
+      [{ x: 999, y: 1, width: 1, height: 1 }, { width: 1000, height: 1000 }],
+    ] as const;
+    const dest = { x: 7, y: 11, width: 123, height: 45 };
+    for (const [source, size] of cases) {
+      const rect = imageDrawRect({ source, dest }, size);
+      const scaleX = rect.width / size.width;
+      const scaleY = rect.height / size.height;
+      expect(rect.x + source.x * scaleX).toBeCloseTo(dest.x, 6);
+      expect(rect.y + source.y * scaleY).toBeCloseTo(dest.y, 6);
+      expect(rect.x + (source.x + source.width) * scaleX).toBeCloseTo(dest.x + dest.width, 6);
+      expect(rect.y + (source.y + source.height) * scaleY).toBeCloseTo(dest.y + dest.height, 6);
+    }
+  });
+
+  it("refuses a zero-sized source rect rather than dividing by it", () => {
+    expect(() =>
+      imageDrawRect(
+        { source: { x: 0, y: 0, width: 0, height: 10 }, dest: TILE_100 },
+        { width: 10, height: 10 },
+      ),
+    ).toThrow(/zero/i);
   });
 });

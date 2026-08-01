@@ -14,13 +14,32 @@ export class SchemaTooNewError extends Error {
 /** A migration takes a document at version N and returns it at version N+1. */
 type Migration = (doc: Record<string, unknown>) => Record<string, unknown>;
 
+/** The tray, as a location key. A row's key is its id, which is a string. */
+const TRAY = Symbol("tray");
+
 /**
- * Schema 1 wrote every tray placement with `index: 0`, so the tray had no
- * order at all. Schema 2 lays the tray out by index like any row, which means
- * those zeros have to become a real sequence. Item `order` is the only stable
- * ordering signal a v1 document carries, so the tray adopts it. Items sharing
- * an `order` keep the order the placements array held, `sort` being stable —
- * arbitrary, but deterministic, and still contiguous.
+ * Schema 2's whole content is the contiguity invariant on the `Placement`
+ * docblock: within every location the indices run `0..n-1`, so a consumer may
+ * read `index` as a position. Schema 1 kept that nowhere, so the migration has
+ * to establish it everywhere — a version bump that delivered it for the tray
+ * and not for rows would be worse than none, because the promise is what the
+ * editor is about to lay tiles out on.
+ *
+ * Each location is renumbered from the ordering signal it actually carries,
+ * which differs between the two:
+ *
+ * - A **row** already holds a real ordering that has merely been damaged.
+ *   Schema 1's `item/remove` and its cross-row `place` both dropped a
+ *   placement without closing the hole behind it, leaving indices like
+ *   `[0, 2]`; closing a hole below a survivor could also shift a row off zero
+ *   entirely, leaving `[1]`. Sorting by the existing index and reassigning
+ *   `0..n-1` repairs both without inventing an order.
+ * - The **tray** holds no ordering at all: schema 1 wrote every tray placement
+ *   at `index: 0`. Item `order` is the only signal left, so the tray adopts
+ *   it.
+ *
+ * Placements tied on their sort key keep the order the array held, `sort`
+ * being stable — arbitrary, but deterministic, and still contiguous.
  *
  * Written defensively against `Record<string, unknown>` rather than `TierList`:
  * the input is by definition a document this version of the code has never
@@ -32,11 +51,16 @@ const migrateV1ToV2: Migration = (doc) => {
   const items = doc["items"];
   if (!Array.isArray(placements)) return doc;
 
+  const asRecord = (value: unknown): Record<string, unknown> | null =>
+    typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>)
+      : null;
+
   const orderOf = new Map<string, number>();
   if (Array.isArray(items)) {
     items.forEach((item, position) => {
-      if (typeof item !== "object" || item === null) return;
-      const record = item as Record<string, unknown>;
+      const record = asRecord(item);
+      if (!record) return;
       const id = record["id"];
       const order = record["order"];
       if (typeof id !== "string") return;
@@ -44,27 +68,55 @@ const migrateV1ToV2: Migration = (doc) => {
     });
   }
 
-  const isTray = (value: unknown): value is Record<string, unknown> =>
-    typeof value === "object" &&
-    value !== null &&
+  /**
+   * The location a placement belongs to, or null for one too malformed to
+   * file: `rowId` present but not a string. Those are left exactly as they
+   * are rather than guessed into a location they may not belong in.
+   */
+  const locationOf = (p: Record<string, unknown>): string | symbol | null => {
+    const rowId = p["rowId"];
     // `== null` deliberately: catches both an explicit null and a missing key.
-    (value as Record<string, unknown>)["rowId"] == null;
+    if (rowId == null) return TRAY;
+    return typeof rowId === "string" ? rowId : null;
+  };
 
-  const trayIndex = new Map<string, number>();
-  placements
-    .filter(isTray)
-    .map((p) => p["itemId"])
-    .filter((id): id is string => typeof id === "string")
-    .sort((a, b) => (orderOf.get(a) ?? 0) - (orderOf.get(b) ?? 0))
-    .forEach((id, index) => trayIndex.set(id, index));
+  const byLocation = new Map<string | symbol, Record<string, unknown>[]>();
+  for (const value of placements) {
+    const p = asRecord(value);
+    if (!p) continue;
+    const location = locationOf(p);
+    if (location === null) continue;
+    const group = byLocation.get(location);
+    if (group) group.push(p);
+    else byLocation.set(location, [p]);
+  }
+
+  const itemOrderKey = (p: Record<string, unknown>): number => {
+    const id = p["itemId"];
+    return (typeof id === "string" ? orderOf.get(id) : undefined) ?? 0;
+  };
+  const existingIndexKey = (p: Record<string, unknown>): number => {
+    const index = p["index"];
+    return typeof index === "number" ? index : 0;
+  };
+
+  // Keyed by the placement itself, not by its `itemId`: the placement is what
+  // is being numbered, and nothing here has established that ids are unique.
+  const nextIndex = new Map<Record<string, unknown>, number>();
+  for (const [location, group] of byLocation) {
+    const key = location === TRAY ? itemOrderKey : existingIndexKey;
+    [...group]
+      .sort((a, b) => key(a) - key(b))
+      .forEach((p, index) => nextIndex.set(p, index));
+  }
 
   return {
     ...doc,
-    placements: placements.map((p) => {
-      if (!isTray(p)) return p;
-      const id = p["itemId"];
-      if (typeof id !== "string") return p;
-      return { ...p, index: trayIndex.get(id) ?? 0 };
+    placements: placements.map((value) => {
+      const p = asRecord(value);
+      if (!p) return value;
+      const index = nextIndex.get(p);
+      return index === undefined ? value : { ...p, index };
     }),
   };
 };

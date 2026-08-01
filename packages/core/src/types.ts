@@ -55,8 +55,11 @@ export interface Item {
  * `reduce()` maintains that invariant but never checks it: @tl/core is a pure
  * model, and validating an untrusted document is a boundary concern. Its home
  * is `migrate()`, which `services/api` already treats as the sole authority on
- * what a valid document is. Until that validation exists, a document that
- * arrives holed stays holed — the reducer trusts its input.
+ * what a valid document is. The schema 1 -> 2 step establishes this invariant
+ * for every document it converts, but that is a one-off repair at a version
+ * boundary rather than a validator: a document that arrives already at the
+ * current version and already holed stays holed — the reducer trusts its
+ * input.
  */
 export interface Placement {
   itemId: string;

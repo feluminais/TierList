@@ -16,6 +16,14 @@ export interface ToolbarProps {
   onAddItem: (label: string) => void;
   onUndo: () => void;
   onRedo: () => void;
+  /** The file alone. Uploading it and minting the item id both live at the
+   *  call site, for the same reason `onAddItem` only takes a label. */
+  onAddImage: (file: File) => void;
+  uploading: boolean;
+  uploadError: string | null;
+  /** Current global tile size, and how to change it. */
+  tileSize: number;
+  onTileSize: (size: number) => void;
 }
 
 /**
@@ -32,6 +40,11 @@ export function Toolbar({
   onAddItem,
   onUndo,
   onRedo,
+  onAddImage,
+  uploading,
+  uploadError,
+  tileSize,
+  onTileSize,
 }: ToolbarProps) {
   const [draft, setDraft] = useState("");
 
@@ -70,6 +83,38 @@ export function Toolbar({
         </button>
       </form>
 
+      <label style={{ ...button(uploading), display: "inline-block", cursor: uploading ? "default" : "pointer" }}>
+        {uploading ? "Uploading…" : "Add image"}
+        <input
+          type="file"
+          data-testid="add-image"
+          accept="image/png,image/jpeg,image/webp"
+          disabled={uploading}
+          style={{ display: "none" }}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            // Cleared so picking the same file twice still fires a change
+            // event — the second pick is otherwise silently ignored.
+            event.target.value = "";
+            if (file) onAddImage(file);
+          }}
+        />
+      </label>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#888" }}>
+        Tile
+        <input
+          aria-label="Tile size"
+          data-testid="tile-size"
+          type="range"
+          min={48}
+          max={200}
+          step={4}
+          value={tileSize}
+          onChange={(event) => onTileSize(Number(event.target.value))}
+        />
+      </label>
+
       <button
         type="button"
         data-testid="undo"
@@ -88,6 +133,12 @@ export function Toolbar({
       >
         Redo
       </button>
+
+      {uploadError ? (
+        <span data-testid="upload-error" role="alert" style={{ ...readout, ...warned }}>
+          {uploadError}
+        </span>
+      ) : null}
 
       <span
         data-testid="save-status"

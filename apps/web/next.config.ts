@@ -26,8 +26,10 @@ const nextConfig: NextConfig = {
       // Skia's ReanimatedProxy try/catch-requires react-native-reanimated and
       // falls back when it throws. apps/mobile made reanimated resolvable, so
       // Turbopack started following that require into raw React Native Flow
-      // source. Unconditional (not `{ browser }`): the server graph reaches it
-      // too, via the Server Component pass over app/spike/SpikeClient.tsx.
+      // source. A runtime try/catch does not prune a static import graph.
+      // Unconditional rather than `{ browser }`: the server graph reaches it
+      // too, through the Server Component pass over any route that renders a
+      // Skia component.
       "react-native-reanimated": "./stubs/reanimated-absent.js",
     },
     resolveExtensions: [

@@ -177,4 +177,18 @@ describe("toTilePoint", () => {
   it("refuses a zero-sized crop rather than dividing by it", () => {
     expect(() => toTilePoint({ x: 0.5, y: 0.5 }, TILE, { x: 0, y: 0, w: 0, h: 1 })).toThrow(/zero/i);
   });
+
+  // TILE and CROP above are both square (200x200, 0.5x0.5), so a mutant that
+  // swaps tile.width for tile.height inside the y calculation is invisible to
+  // every test above — both are 200. A non-square tile with a non-square crop
+  // is what actually distinguishes the two axes; this is the same trap the
+  // toSourcePoint tests above call out by name, now caught here too.
+  it("does not transpose tile.width and tile.height for a non-square tile with an asymmetric crop", () => {
+    const wideTile = { x: 0, y: 0, width: 400, height: 100 };
+    const asymCrop = { x: 0.1, y: 0.6, w: 0.2, h: 0.3 };
+    // Source point 1/4 of the way across the crop's width, 1/2 down its height.
+    const p = toTilePoint({ x: 0.1 + 0.25 * 0.2, y: 0.6 + 0.5 * 0.3 }, wideTile, asymCrop);
+    expect(p.x).toBeCloseTo(100, 10);
+    expect(p.y).toBeCloseTo(50, 10);
+  });
 });

@@ -54,7 +54,23 @@ export interface DragResult {
   state: DragState;
   /** Non-null exactly when the gesture committed a move. */
   action: TierListAction | null;
-  /** True when the caller should hand the gesture back to the scroller. */
+  /**
+   * True when the caller should hand the gesture back to the scroller.
+   *
+   * **Nothing reads this, and that is a conclusion rather than an omission.**
+   * Both branches that set it — slop exceeded during a pending press, and an
+   * item that went away under the finger before the hold completed — also
+   * return the machine to `idle`, and the one place a caller could act on it,
+   * `onResponderTerminationRequest`, already answers from the phase. Reading
+   * the field as well would be a second source of the same truth, free to
+   * disagree with the first.
+   *
+   * It stays because neither platform lets a responder actively hand a gesture
+   * back, so there is currently nothing else to do with the knowledge: Android's
+   * `ScrollView` takes a gesture by intercepting it and a browser takes it by
+   * cancelling, and in both cases the machine is told afterwards. If a caller
+   * ever gains a way to yield on purpose, this is the signal to yield on.
+   */
   releaseToScroll: boolean;
   /** Set when the gesture turned out to be a tap rather than a drag. */
   tapped: { itemId: string } | null;

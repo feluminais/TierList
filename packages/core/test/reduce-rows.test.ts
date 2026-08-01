@@ -68,6 +68,25 @@ describe("reduce — row/remove", () => {
     expect(next.placements).toHaveLength(1);
     expect(next.placements[0]).toMatchObject({ itemId: "i1", rowId: null });
   });
+
+  it("appends the returned items to the end of the tray, keeping its indices contiguous", () => {
+    let doc = base();
+    for (const id of ["i1", "i2", "i3", "i4"]) {
+      doc = reduce(doc, { type: "item/addText", id, label: id }, LATER);
+    }
+    const row = "list-1-row-1";
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: row, index: 0 }, LATER);
+    doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: row, index: 1 }, LATER);
+    doc = reduce(doc, { type: "placement/place", itemId: "i3", rowId: row, index: 2 }, LATER);
+    doc = reduce(doc, { type: "row/remove", rowId: row }, LATER);
+
+    const tray = doc.placements
+      .filter((p) => p.rowId === null)
+      .sort((a, b) => a.index - b.index);
+    // i4 never left the tray; i1..i3 land after it, in the order they held in the row.
+    expect(tray.map((p) => p.itemId)).toEqual(["i4", "i1", "i2", "i3"]);
+    expect(tray.map((p) => p.index)).toEqual([0, 1, 2, 3]);
+  });
 });
 
 describe("reduce — row/reorder", () => {

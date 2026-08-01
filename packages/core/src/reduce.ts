@@ -48,12 +48,19 @@ function apply(doc: TierList, action: TierListAction): TierList {
 
     case "row/remove": {
       if (!doc.rows.some((r) => r.id === action.rowId)) return doc;
+      const kept = doc.placements.filter((p) => p.rowId !== action.rowId);
+      // The row's items go to the end of the tray in the order they held, the
+      // same destination `placement/unplace` uses, and numbered from the tray's
+      // current length so its indices stay contiguous.
+      const trayBase = trayCount(kept);
+      const returned = doc.placements
+        .filter((p) => p.rowId === action.rowId)
+        .sort((a, b) => a.index - b.index)
+        .map((p, i) => ({ ...p, rowId: null, index: trayBase + i }));
       return {
         ...doc,
         rows: renumber(doc.rows.filter((r) => r.id !== action.rowId)),
-        placements: doc.placements.map((p) =>
-          p.rowId === action.rowId ? { ...p, rowId: null, index: 0 } : p,
-        ),
+        placements: [...kept, ...returned],
       };
     }
 

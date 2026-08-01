@@ -1,7 +1,14 @@
 import { migrate, type TierList } from "@tl/core";
 import { and, desc, eq } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
-import { deviceTokens, tierLists, type NewTierListRow } from "./schema";
+import {
+  assets,
+  deviceTokens,
+  tierLists,
+  type AssetRow,
+  type NewAssetRow,
+  type NewTierListRow,
+} from "./schema";
 
 /**
  * The driver-agnostic base both Drizzle Postgres drivers extend:
@@ -44,6 +51,14 @@ export interface Repository {
   /** Stores a minted token by its hash. The raw token never reaches here. */
   createToken: (id: string, tokenHash: string, now: Date) => Promise<void>;
   findTokenId: (tokenHash: string) => Promise<string | null>;
+  /** Records an upload whose bytes are already in the object store. */
+  createAsset: (row: NewAssetRow) => Promise<void>;
+  findAsset: (id: string) => Promise<AssetRow | null>;
+  /**
+   * An owner's existing asset with these exact bytes, if any. Scoped to the
+   * owner so no two owners ever share a storage key.
+   */
+  findAssetByChecksum: (ownerId: string, checksum: string) => Promise<AssetRow | null>;
 }
 
 /** The single place projected columns are derived from the document. */
@@ -168,6 +183,24 @@ export function createRepository(db: Db): Repository {
         .limit(1);
 
       return rows[0]?.id ?? null;
+    },
+
+    async createAsset(row) {
+      await db.insert(assets).values(row);
+    },
+
+    async findAsset(id) {
+      const rows = await db.select().from(assets).where(eq(assets.id, id)).limit(1);
+      return rows[0] ?? null;
+    },
+
+    async findAssetByChecksum(ownerId, checksum) {
+      const rows = await db
+        .select()
+        .from(assets)
+        .where(and(eq(assets.ownerId, ownerId), eq(assets.checksum, checksum)))
+        .limit(1);
+      return rows[0] ?? null;
     },
   };
 }

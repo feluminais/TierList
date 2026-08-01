@@ -15,3 +15,16 @@ const wasmSrc = require.resolve("canvaskit-wasm/bin/full/canvaskit.wasm", {
 });
 
 fs.copyFileSync(wasmSrc, path.join(publicFolder, "canvaskit.wasm"));
+
+// The browser has no Metro asset registry, so `useFont` takes a URL and the
+// .ttf has to be served as a static file. Resolved through require.resolve so
+// a package layout change fails loudly here rather than as a blank label —
+// note the weight lives in its own directory, not at the package root.
+// Resolved from @tl/editor's location because that is the package that
+// declares the dependency; apps/web only needs the bytes.
+const fontSrc = require.resolve(
+  "@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf",
+  { paths: [require.resolve("@tl/editor/package.json")] },
+);
+
+fs.copyFileSync(fontSrc, path.join(publicFolder, "Inter-Regular.ttf"));

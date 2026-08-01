@@ -24,6 +24,9 @@ export function toTemplate(doc: TierList, params: DeriveParams): TierList {
     placements: trayPlacements(doc),
     boardAnnotations: [],
     templateId: undefined,
+    // Cleared explicitly: `doc` may itself be a fill, and spreading it would
+    // carry its templateRevision onto a template that has no templateId.
+    templateRevision: undefined,
     authorId: params.authorId ?? doc.authorId,
     createdAt: params.now,
     updatedAt: params.now,

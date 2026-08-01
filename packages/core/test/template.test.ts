@@ -41,6 +41,17 @@ describe("toTemplate", () => {
   it("is not itself derived from a template", () => {
     const t = toTemplate(filledList(), { id: "tpl-1", now: LATER });
     expect(t.templateId).toBeUndefined();
+    expect(t.templateRevision).toBeUndefined();
+  });
+
+  it("clears templateRevision when publishing a fill as a new template", () => {
+    const original = toTemplate(filledList(), { id: "tpl-1", now: LATER });
+    const fill = startFill(original, { id: "fill-1", now: LATER });
+    expect(fill.templateRevision).toBe(0);
+
+    const republished = toTemplate(fill, { id: "tpl-2", now: LATER });
+    expect(republished.templateId).toBeUndefined();
+    expect(republished.templateRevision).toBeUndefined();
   });
 
   it("does not mutate the source list", () => {

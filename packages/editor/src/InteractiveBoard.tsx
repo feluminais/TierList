@@ -1,6 +1,6 @@
 import type { TierList, TierListAction } from "@tl/core";
 import { layoutBoard } from "@tl/editor-core";
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import { View } from "react-native";
 import { TierBoard } from "./TierBoard";
 import { useBoardGesture } from "./useBoardGesture";
@@ -13,6 +13,27 @@ export interface InteractiveBoardProps {
   viewportHeight?: number;
   scrollY?: number;
   onAutoScroll?: (delta: number) => void;
+  /**
+   * Fired when a drag starts and again when it ends.
+   *
+   * A parent scroll container has to know, and cannot infer it. On Android a
+   * native `ScrollView` decides for itself when to claim a touch stream: past
+   * the platform touch slop it intercepts, calls
+   * `NativeGestureUtil.notifyNativeGestureStarted`, and the resulting
+   * `topTouchCancel` terminates the JS responder **without consulting
+   * `onResponderTerminationRequest`** (`ReactScrollView.onInterceptTouchEvent`
+   * -> `handleInterceptedTouchEvent`; the termination request is only reachable
+   * through responder negotiation). So `onResponderTerminationRequest` is not,
+   * by itself, enough to hold a drag against a scroller — a drag would be
+   * cancelled the moment the finger moved.
+   *
+   * The lever that does work is the scroller's own `scrollEnabled`: it returns
+   * `false` from `onInterceptTouchEvent` before anything else is considered,
+   * while leaving programmatic `scrollTo` — which is how autoscroll drives it —
+   * untouched. A parent should turn scrolling off for exactly the span this
+   * reports.
+   */
+  onDraggingChange?: (dragging: boolean) => void;
 }
 
 /**
@@ -37,6 +58,7 @@ export function InteractiveBoard({
   viewportHeight,
   scrollY,
   onAutoScroll,
+  onDraggingChange,
 }: InteractiveBoardProps) {
   const layout = useMemo(() => layoutBoard(doc, { width }), [doc, width]);
 
@@ -48,6 +70,13 @@ export function InteractiveBoard({
     scrollY,
     onAutoScroll,
   });
+
+  // Narrowed to a boolean before it becomes a dependency, so a parent is told
+  // once per drag rather than once per frame the pointer moves.
+  const dragging = drag.phase === "dragging";
+  useEffect(() => {
+    onDraggingChange?.(dragging);
+  }, [dragging, onDraggingChange]);
 
   return (
     <View style={{ width, height: layout.contentHeight }} {...handlers}>

@@ -3,6 +3,7 @@ import {
   autoScrollDelta,
   dragReduce,
   idleDrag,
+  pointerAfterScroll,
   DRAG_HOLD_MS,
   type BoardLayout,
   type DragEvent,
@@ -209,6 +210,41 @@ export function useBoardGesture(options: BoardGestureOptions): BoardGesture {
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [drag.phase]);
+
+  // The other half of autoscroll: keeping the pointer honest while the board
+  // moves under a finger that has not.
+  //
+  // A stationary finger produces no touch events, so nothing else would ever
+  // update `pointer` during an autoscroll — the caret and the preview would sit
+  // at a content position the board had slid out from under. The synthetic move
+  // goes through `dragReduce` like any other, so the drop target is recomputed
+  // against the rows that have just scrolled into view. That is the point of it,
+  // not a side effect.
+  //
+  // Reading `scrollY` from the prop rather than the ref is deliberate: this
+  // effect exists precisely *because* the offset changed, so it must be the
+  // thing that wakes it. The frame loop above reads the ref for the opposite
+  // reason.
+  //
+  // This cannot run away. `pointerAfterScroll` shifts the pointer by exactly
+  // the distance the content moved, so the viewport position the frame loop
+  // then reads back is unchanged and the next frame asks for the same delta:
+  // the board glides at a constant speed rather than accelerating. It ends when
+  // the drag does, or when the scroller hits the content bounds and stops
+  // moving — an observed change of zero sends no event at all.
+  const correctedScrollY = useRef(scrollY ?? 0);
+  useEffect(() => {
+    const offset = scrollY ?? 0;
+    const previous = correctedScrollY.current;
+    correctedScrollY.current = offset;
+
+    // Reads `dragRef`, not `drag`, so the correction is judged against the
+    // phase as it is now rather than as it was when this effect was created.
+    const point = pointerAfterScroll(dragRef.current, previous, offset);
+    if (!point) return;
+
+    send({ type: "move", at: { point, time: Date.now() }, layout: layoutRef.current });
+  }, [scrollY, send]);
 
   useEffect(() => clearHold, [clearHold]);
 

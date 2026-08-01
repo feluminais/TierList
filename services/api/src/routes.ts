@@ -1,6 +1,8 @@
 import { migrate, type TierList } from "@tl/core";
 import { Hono } from "hono";
+import { randomUUID } from "node:crypto";
 import { RevisionConflictError, type Repository } from "./repository";
+import { generateToken, hashToken } from "./tokens";
 
 export interface RouteDeps {
   repository: Repository;
@@ -21,6 +23,18 @@ function parseDocument(value: unknown): TierList | null {
 
 export function createRoutes(deps: RouteDeps) {
   const routes = new Hono();
+
+  /**
+   * The one place the server generates an id and reads the clock. The document
+   * model forbids both so reductions stay deterministic, but a token has no
+   * such requirement and no caller should be choosing its own identity.
+   */
+  routes.post("/tokens", async (c) => {
+    const token = generateToken();
+    const id = randomUUID();
+    await deps.repository.createToken(id, hashToken(token), new Date());
+    return c.json({ id, token }, 201);
+  });
 
   routes.put("/lists/:id", async (c) => {
     const id = c.req.param("id");

@@ -1,7 +1,7 @@
 import { migrate, type TierList } from "@tl/core";
 import { and, eq } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
-import { tierLists, type NewTierListRow } from "./schema";
+import { deviceTokens, tierLists, type NewTierListRow } from "./schema";
 
 /**
  * The driver-agnostic base both Drizzle Postgres drivers extend:
@@ -28,6 +28,9 @@ export interface Repository {
   create: (doc: TierList) => Promise<boolean>;
   load: (id: string) => Promise<TierList | null>;
   update: (doc: TierList, expectedRevision: number) => Promise<void>;
+  /** Stores a minted token by its hash. The raw token never reaches here. */
+  createToken: (id: string, tokenHash: string, now: Date) => Promise<void>;
+  findTokenId: (tokenHash: string) => Promise<string | null>;
 }
 
 /** The single place projected columns are derived from the document. */
@@ -104,6 +107,25 @@ export function createRepository(db: Db): Repository {
       if (updated.length === 0) {
         throw new RevisionConflictError(doc.id, expectedRevision);
       }
+    },
+
+    async createToken(id, tokenHash, now) {
+      await db.insert(deviceTokens).values({
+        id,
+        tokenHash,
+        createdAt: now,
+        lastSeenAt: now,
+      });
+    },
+
+    async findTokenId(tokenHash) {
+      const rows = await db
+        .select({ id: deviceTokens.id })
+        .from(deviceTokens)
+        .where(eq(deviceTokens.tokenHash, tokenHash))
+        .limit(1);
+
+      return rows[0]?.id ?? null;
     },
   };
 }

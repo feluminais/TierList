@@ -17,6 +17,7 @@ import {
   useState,
   type ComponentType,
 } from "react";
+import { EditSheet, type EditCanvasComponent } from "./EditSheet";
 import { Toolbar } from "./Toolbar";
 import { useApiClient } from "./useApiClient";
 import { useAssetUpload } from "./useAssetUpload";
@@ -54,6 +55,7 @@ const LIST_ID_KEY = "tl.listId";
  */
 export default function SkiaHost() {
   const [Board, setBoard] = useState<ComponentType<BoardProps> | null>(null);
+  const [EditCanvasComp, setEditCanvasComp] = useState<EditCanvasComponent | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -71,6 +73,7 @@ export default function SkiaHost() {
         const mod = await import("@tl/editor");
         if (!alive) return;
         setBoard(() => mod.InteractiveBoard);
+        setEditCanvasComp(() => mod.EditCanvas);
       } catch (e) {
         if (alive) setError(String(e));
       }
@@ -204,6 +207,17 @@ export default function SkiaHost() {
   // "2D gives this a meaning" never happened until now.
   const [editing, setEditing] = useState<string | null>(null);
   const onTap = useCallback((itemId: string) => setEditing(itemId), []);
+  const editingItem = editing
+    ? session.doc.items.find((i) => i.id === editing)
+    : undefined;
+  useEffect(() => {
+    // The item a sheet is open on can vanish from under it — removed, or an
+    // undo reaching back past when it was added. `item/setEdit` guards on a
+    // missing item and is a no-op (packages/core/src/reduce.ts), so nothing
+    // corrupts, but a sheet left open over a tile that no longer exists is a
+    // worse experience than one that closes.
+    if (editing && !editingItem) setEditing(null);
+  }, [editing, editingItem]);
 
   // Stable, and every one of them a functional update, so the hook can hold
   // them behind a ref without ever reading a stale session.
@@ -270,7 +284,15 @@ export default function SkiaHost() {
           />
         </div>
       )}
-      {/* `editing` has no sheet to open onto yet — that's the next commit. */}
+      {editingItem && EditCanvasComp ? (
+        <EditSheet
+          item={editingItem}
+          EditCanvas={EditCanvasComp}
+          assetUrl={assetUrl}
+          onAction={dispatch}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
     </div>
   );
 }

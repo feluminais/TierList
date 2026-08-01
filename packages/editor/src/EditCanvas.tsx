@@ -1,0 +1,121 @@
+import type { Item } from "@tl/core";
+import { imageDrawRect, imagePlacement, toTilePoint, type Rect as GeometryRect } from "@tl/editor-core";
+import { Canvas, Fill, Group, Image, Path, Skia, rect } from "@shopify/react-native-skia";
+import React, { useMemo } from "react";
+import { BOARD_BACKGROUND, tileFill } from "./theme";
+import { useImageCache } from "./useImageCache";
+
+/** A stroke not yet committed to the document, already in this canvas's own
+ *  coordinate space — see `EditSheet`'s comment on why that mapping happens
+ *  before this component ever sees the points. */
+export interface LiveStroke {
+  points: number[]; // flat [x0, y0, x1, y1, …], canvas-space
+  color: string;
+  width: number;
+}
+
+export interface EditCanvasProps {
+  item: Item;
+  /** Both dimensions: the canvas is always square, one tile's worth. */
+  size: number;
+  assetUrl: (assetId: string) => string;
+  liveStroke: LiveStroke | null;
+}
+
+/**
+ * The pen sheet's canvas: one tile, blown up.
+ *
+ * This is deliberately not `TierBoard` reused at a bigger size — a sheet edits
+ * exactly one item and has no rows, no drag, no other tiles to lay out, so the
+ * geometry is simply this canvas's own bounds. That is what lets
+ * `editReduce` — the same pure machine either way — serve a 96px board tile
+ * and a 600px sheet without knowing which one it is talking to.
+ *
+ * Loads its own copy of the image rather than sharing `InteractiveBoard`'s
+ * cache: the two are separate React subtrees on opposite sides of the
+ * dynamic-import boundary (`SkiaHost` cannot hold a cache created inside
+ * `@tl/editor`, only pass the pieces needed to build one), and a second
+ * decode of one image is a cost worth paying for not threading a cache
+ * instance across that boundary.
+ */
+export function EditCanvas({ item, size, assetUrl, liveStroke }: EditCanvasProps) {
+  const assetIds = useMemo(() => (item.assetId ? [item.assetId] : []), [item.assetId]);
+  const images = useImageCache(assetIds, assetUrl);
+  const entry = item.assetId ? images.get(item.assetId) : undefined;
+  const ready = entry?.status === "ready" ? entry.image : null;
+
+  // The canvas *is* the tile: no offset, no scale relative to the board.
+  const dest: GeometryRect = { x: 0, y: 0, width: size, height: size };
+
+  return (
+    <Canvas style={{ width: size, height: size }}>
+      <Fill color={ready ? BOARD_BACKGROUND : tileFill(item, entry?.status)} />
+      {ready ? (
+        <Group clip={rect(dest.x, dest.y, dest.width, dest.height)}>
+          {(() => {
+            const source = { width: ready.width(), height: ready.height() };
+            const placement = imagePlacement(source, item.edit, dest);
+            const draw = imageDrawRect(placement, source);
+            return (
+              <Image
+                image={ready}
+                x={draw.x}
+                y={draw.y}
+                width={draw.width}
+                height={draw.height}
+                fit="fill"
+              />
+            );
+          })()}
+
+          {item.edit.strokes.map((stroke) => {
+            const path = Skia.Path.Make();
+            for (let p = 0; p + 1 < stroke.points.length; p += 2) {
+              const point = toTilePoint(
+                { x: stroke.points[p]!, y: stroke.points[p + 1]! },
+                dest,
+                item.edit.crop,
+              );
+              if (p === 0) path.moveTo(point.x, point.y);
+              else path.lineTo(point.x, point.y);
+            }
+            return (
+              <Path
+                key={stroke.id}
+                path={path}
+                color={stroke.color}
+                style="stroke"
+                strokeWidth={stroke.width}
+                strokeCap="round"
+                strokeJoin="round"
+              />
+            );
+          })}
+
+          {/* The stroke still in the user's hand. Drawn last, over every
+              committed one, and never written to the document until penUp —
+              see EditSheet. */}
+          {liveStroke ? (
+            <Path
+              path={livePath(liveStroke.points)}
+              color={liveStroke.color}
+              style="stroke"
+              strokeWidth={liveStroke.width}
+              strokeCap="round"
+              strokeJoin="round"
+            />
+          ) : null}
+        </Group>
+      ) : null}
+    </Canvas>
+  );
+}
+
+function livePath(points: number[]) {
+  const path = Skia.Path.Make();
+  for (let p = 0; p + 1 < points.length; p += 2) {
+    if (p === 0) path.moveTo(points[p]!, points[p + 1]!);
+    else path.lineTo(points[p]!, points[p + 1]!);
+  }
+  return path;
+}

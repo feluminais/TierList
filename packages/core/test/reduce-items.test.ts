@@ -42,6 +42,49 @@ describe("item/remove", () => {
     expect(doc.items.map((i) => i.order)).toEqual([0, 1]);
     expect(doc.placements.find((p) => p.itemId === "i2")).toBeUndefined();
   });
+
+  it("closes the gap in the row when a middle item is removed", () => {
+    let doc = withItems(["i1", "i2", "i3"]);
+    doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: S, index: 0 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: S, index: 1 }, NOW);
+    doc = reduce(doc, { type: "placement/place", itemId: "i3", rowId: S, index: 2 }, NOW);
+    doc = reduce(doc, { type: "item/remove", itemId: "i2" }, NOW);
+
+    const inS = doc.placements
+      .filter((p) => p.rowId === S)
+      .sort((a, b) => a.index - b.index);
+    expect(inS.map((p) => p.itemId)).toEqual(["i1", "i3"]);
+    expect(inS.map((p) => p.index)).toEqual([0, 1]);
+  });
+
+  it("closes the gap in the tray when a middle item is removed", () => {
+    const doc = reduce(withItems(["i1", "i2", "i3"]), { type: "item/remove", itemId: "i2" }, NOW);
+
+    const tray = doc.placements
+      .filter((p) => p.rowId === null)
+      .sort((a, b) => a.index - b.index);
+    expect(tray.map((p) => p.itemId)).toEqual(["i1", "i3"]);
+    expect(tray.map((p) => p.index)).toEqual([0, 1]);
+  });
+
+  it("removes an item that has no placement at all", () => {
+    // Reachable: migrate() casts an untrusted document through without
+    // checking that every item has a placement, so a loaded document can
+    // hold one. Removing it must not disturb the placements that do exist.
+    const base = withItems(["i1", "i2"]);
+    const doc: TierList = {
+      ...base,
+      items: [...base.items, { ...base.items[0]!, id: "orphan", order: 2 }],
+    };
+    const next = reduce(doc, { type: "item/remove", itemId: "orphan" }, NOW);
+
+    expect(next.items.map((i) => i.id)).toEqual(["i1", "i2"]);
+    const tray = next.placements
+      .filter((p) => p.rowId === null)
+      .sort((a, b) => a.index - b.index);
+    expect(tray.map((p) => p.itemId)).toEqual(["i1", "i2"]);
+    expect(tray.map((p) => p.index)).toEqual([0, 1]);
+  });
 });
 
 describe("item/setEdit", () => {

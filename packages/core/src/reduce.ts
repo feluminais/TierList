@@ -14,6 +14,21 @@ function trayCount(placements: Placement[]): number {
   return placements.filter((p) => p.rowId === null).length;
 }
 
+/**
+ * Close the hole a placement left behind, so indices stay contiguous within
+ * every location. `placements` must already exclude the vacated placement.
+ *
+ * `row/remove` deliberately does not use this: it relocates a whole row at
+ * once rather than shifting around a single hole.
+ */
+function closeGap(placements: Placement[], vacated: Placement): Placement[] {
+  return placements.map((p) =>
+    p.rowId === vacated.rowId && p.index > vacated.index
+      ? { ...p, index: p.index - 1 }
+      : p,
+  );
+}
+
 function apply(doc: TierList, action: TierListAction): TierList {
   switch (action.type) {
     case "row/add": {
@@ -117,12 +132,17 @@ function apply(doc: TierList, action: TierListAction): TierList {
 
     case "item/remove": {
       if (!doc.items.some((i) => i.id === action.itemId)) return doc;
+      const vacated = doc.placements.find((p) => p.itemId === action.itemId);
+      const remaining = doc.placements.filter((p) => p.itemId !== action.itemId);
       return {
         ...doc,
         items: doc.items
           .filter((i) => i.id !== action.itemId)
           .map((i, idx) => ({ ...i, order: idx })),
-        placements: doc.placements.filter((p) => p.itemId !== action.itemId),
+        // `vacated` is undefined only for a document that reached us with an
+        // item but no placement — migrate() does not rule that out — in which
+        // case there is no hole to close.
+        placements: vacated ? closeGap(remaining, vacated) : remaining,
       };
     }
 
@@ -146,11 +166,7 @@ function apply(doc: TierList, action: TierListAction): TierList {
       // renumber below, and resettling first would shift it twice.
       const resettled =
         current && current.rowId !== action.rowId
-          ? others.map((p) =>
-              p.rowId === current.rowId && p.index > current.index
-                ? { ...p, index: p.index - 1 }
-                : p,
-            )
+          ? closeGap(others, current)
           : others;
 
       const inTarget = resettled
@@ -175,11 +191,7 @@ function apply(doc: TierList, action: TierListAction): TierList {
       if (current.rowId === null) return doc;
 
       const others = doc.placements.filter((p) => p.itemId !== action.itemId);
-      const resettled = others.map((p) =>
-        p.rowId === current.rowId && p.index > current.index
-          ? { ...p, index: p.index - 1 }
-          : p,
-      );
+      const resettled = closeGap(others, current);
       return {
         ...doc,
         placements: [

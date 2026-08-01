@@ -1,4 +1,5 @@
-import { createTierList, reduce } from "@tl/core";
+import { createTierList, reduce, SCHEMA_VERSION, type TierList } from "@tl/core";
+import { sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createRepository,
@@ -53,10 +54,29 @@ describe("create and load", () => {
       title: "Ramen",
       author_id: "user-1",
       revision: 0,
-      // Read off the document, not written as a literal: the point of the
-      // column is that it tracks whatever @tl/core says the version is.
-      schema_version: doc.schemaVersion,
+      // Asserted against @tl/core's constant rather than a literal, so a
+      // version bump does not trip a false alarm here — but against the
+      // constant rather than `doc.schemaVersion`, so this still fails if the
+      // column is written from anywhere other than the document.
+      schema_version: SCHEMA_VERSION,
     });
+  });
+
+  /**
+   * The assertion above cannot tell `doc.schemaVersion` from the SCHEMA_VERSION
+   * constant, because `createTierList` stamps the current version — the two are
+   * the same number in every fixture. Only a document whose version differs
+   * from the constant separates them, which is what pins the column as a
+   * *projection of the document* rather than a second opinion about it.
+   */
+  it("projects schema_version from the document, not from the current constant", async () => {
+    const stale = { ...createTierList({ id: "list-1", now: NOW }), schemaVersion: 1 };
+    await repo.create(stale, OWNER);
+
+    const rows = await ctx.db.execute(
+      "select schema_version from tier_lists where id = 'list-1'",
+    );
+    expect(rows.rows[0]).toMatchObject({ schema_version: 1 });
   });
 
   // create() must never be a back door around the revision check in update().
@@ -73,6 +93,84 @@ describe("create and load", () => {
 
     const loaded = await repo.load("list-1");
     expect(loaded).toEqual(first);
+  });
+});
+
+/**
+ * `load()` runs every stored document through `migrate()`, and until schema 2
+ * there was nothing for it to do — so nothing here had ever exercised the path.
+ * It cannot be reached through the repository's own API either: every fixture
+ * goes through `createTierList`, which stamps the *current* SCHEMA_VERSION. The
+ * row has to be written by hand, the way `helpers/pglite.test.ts` does.
+ */
+describe("load migrates a document stored at an older schema", () => {
+  /**
+   * A document damaged the way schema 1 actually damaged them: a row holed by
+   * an `item/remove` that dropped a placement without closing the gap behind
+   * it, and a tray whose placements are all pinned at index 0 because index 0
+   * is all schema 1 ever wrote there.
+   */
+  async function storeV1(): Promise<void> {
+    const document = {
+      ...createTierList({ id: "v1-list", now: NOW, title: "Legacy" }),
+      schemaVersion: 1,
+      items: [
+        { id: "a", kind: "text", label: "a", edit: {}, order: 0 },
+        { id: "b", kind: "text", label: "b", edit: {}, order: 1 },
+        { id: "c", kind: "text", label: "c", edit: {}, order: 2 },
+        { id: "d", kind: "text", label: "d", edit: {}, order: 3 },
+      ],
+      placements: [
+        { itemId: "a", rowId: "v1-list-row-0", index: 5 },
+        { itemId: "b", rowId: "v1-list-row-0", index: 2 },
+        { itemId: "d", rowId: null, index: 0 },
+        { itemId: "c", rowId: null, index: 0 },
+      ],
+    };
+
+    await ctx.db.execute(sql`
+      insert into tier_lists
+        (id, owner_id, title, schema_version, revision, document, created_at, updated_at)
+      values
+        ('v1-list', ${OWNER}, 'Legacy', 1, 0,
+         ${JSON.stringify(document)}::jsonb, now(), now())
+    `);
+  }
+
+  const location = (doc: TierList, rowId: string | null): [string, number][] =>
+    doc.placements
+      .filter((p) => p.rowId === rowId)
+      .sort((x, y) => x.index - y.index)
+      .map((p) => [p.itemId, p.index]);
+
+  it("returns it at the current schema with contiguous indices everywhere", async () => {
+    await storeV1();
+    const loaded = await repo.load("v1-list");
+    if (!loaded) throw new Error("expected the stored v1 document to load");
+
+    expect(loaded.schemaVersion).toBe(SCHEMA_VERSION);
+    // The row keeps the order its indices expressed; the tray, which had none,
+    // adopts item `order`.
+    expect(location(loaded, "v1-list-row-0")).toEqual([
+      ["b", 0],
+      ["a", 1],
+    ]);
+    expect(location(loaded, null)).toEqual([
+      ["c", 0],
+      ["d", 1],
+    ]);
+  });
+
+  // Lazily: reading does not write. The migration therefore runs on every read
+  // until something updates the document, which is the trade this design makes.
+  it("leaves the stored row at its original schema version", async () => {
+    await storeV1();
+    await repo.load("v1-list");
+
+    const rows = await ctx.db.execute(
+      "select schema_version from tier_lists where id = 'v1-list'",
+    );
+    expect(rows.rows[0]).toMatchObject({ schema_version: 1 });
   });
 });
 

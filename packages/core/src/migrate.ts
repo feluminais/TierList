@@ -11,7 +11,26 @@ export class SchemaTooNewError extends Error {
   }
 }
 
-/** A migration takes a document at version N and returns it at version N+1. */
+/**
+ * A migration takes a document at version N and returns it at version N+1.
+ *
+ * Three rules, all load-bearing, all of them things `migrate()` relies on. If
+ * you are writing the schema 3 step by reading `migrateV1ToV2`, these are the
+ * parts of the contract that are not visible from there:
+ *
+ * - **Must not mutate its input.** `migrate()` runs on HTTP request bodies
+ *   (`services/api/src/routes.ts`) and on rows read from the database; it owns
+ *   neither. Return new objects; sharing untouched sub-trees with the input is
+ *   fine, writing into them is not.
+ * - **Must not stamp `schemaVersion` itself** — the runner does it. That is
+ *   what lets a migration with nothing to change hand its input straight back
+ *   without the stamp landing on the caller's object.
+ * - **Must not throw on a malformed field.** The input is by definition a
+ *   document this version of the code has never validated. Throwing makes such
+ *   a document unopenable rather than imperfect, so leave a field you cannot
+ *   make sense of exactly as you found it. `asRecord` below is the usual way
+ *   to say that.
+ */
 type Migration = (doc: Record<string, unknown>) => Record<string, unknown>;
 
 /**
@@ -54,10 +73,8 @@ const asRecord = (value: unknown): Record<string, unknown> | null =>
  * Placements tied on their sort key keep the order the array held, `sort`
  * being stable — arbitrary, but deterministic, and still contiguous.
  *
- * Written defensively against `Record<string, unknown>` rather than `TierList`:
- * the input is by definition a document this version of the code has never
- * validated, and a migration that throws on a malformed field makes a document
- * unopenable rather than imperfect.
+ * Every `asRecord` and `typeof` guard below is the third rule on `Migration`
+ * being kept, not defensive habit: a malformed field is left exactly as found.
  */
 const migrateV1ToV2: Migration = (doc) => {
   const placements = doc["placements"];
@@ -91,16 +108,28 @@ const migrateV1ToV2: Migration = (doc) => {
     return typeof rowId === "string" ? rowId : null;
   };
 
-  const byLocation = new Map<string | symbol, Record<string, unknown>[]>();
-  for (const value of placements) {
+  /**
+   * Groups hold the *position* a placement occupies in `placements`, not the
+   * placement. A slot is what gets numbered, and two slots may hold the same
+   * object reference — not from `JSON.parse`, but `migrate` is exported, so an
+   * in-process caller can hand one in. Keyed by object, such a pair is
+   * assigned twice and the last write wins, producing a location with no zero
+   * and a duplicate: the invariant this step exists to establish, broken.
+   * Positions are unique by construction.
+   */
+  const byLocation = new Map<
+    string | symbol,
+    { at: number; p: Record<string, unknown> }[]
+  >();
+  placements.forEach((value, at) => {
     const p = asRecord(value);
-    if (!p) continue;
+    if (!p) return;
     const location = locationOf(p);
-    if (location === null) continue;
+    if (location === null) return;
     const group = byLocation.get(location);
-    if (group) group.push(p);
-    else byLocation.set(location, [p]);
-  }
+    if (group) group.push({ at, p });
+    else byLocation.set(location, [{ at, p }]);
+  });
 
   const itemOrderKey = (p: Record<string, unknown>): number => {
     const id = p["itemId"];
@@ -111,23 +140,26 @@ const migrateV1ToV2: Migration = (doc) => {
     return typeof index === "number" ? index : 0;
   };
 
-  // Keyed by the placement itself, not by its `itemId`: the placement is what
-  // is being numbered, and nothing here has established that ids are unique.
-  const nextIndex = new Map<Record<string, unknown>, number>();
+  /** Position in `placements` -> the index that slot should now carry. */
+  const nextIndex = new Map<number, number>();
   for (const [location, group] of byLocation) {
     const key = location === TRAY ? itemOrderKey : existingIndexKey;
     [...group]
-      .sort((a, b) => key(a) - key(b))
-      .forEach((p, index) => nextIndex.set(p, index));
+      .sort((a, b) => key(a.p) - key(b.p))
+      .forEach(({ at }, index) => nextIndex.set(at, index));
   }
 
   return {
     ...doc,
-    placements: placements.map((value) => {
+    placements: placements.map((value, at) => {
+      const index = nextIndex.get(at);
       const p = asRecord(value);
-      if (!p) return value;
-      const index = nextIndex.get(p);
-      return index === undefined ? value : { ...p, index };
+      // A slot absent from the map was skipped as unfilable above, and is
+      // handed back untouched — the same value, not a copy of it. The `!p` is
+      // narrowing, not a second case: a slot only reaches the map by having
+      // been a record when it was grouped.
+      if (index === undefined || !p) return value;
+      return { ...p, index };
     }),
   };
 };
@@ -174,10 +206,9 @@ export function migrate(raw: unknown): TierList {
       );
     }
     currentVersion += 1;
-    // Spread rather than assign into `step`'s result: a migration with nothing
-    // to change may legitimately hand its input straight back, and writing the
-    // stamp in place would then land on the caller's object. `migrate()` is
-    // called on request bodies and stored rows; it does not own either.
+    // Spread rather than assign: the `Migration` contract lets a step with
+    // nothing to change hand its input straight back, so stamping in place
+    // would write through to the caller's object.
     current = { ...step(current), schemaVersion: currentVersion };
   }
 

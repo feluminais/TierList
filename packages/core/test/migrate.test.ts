@@ -5,6 +5,27 @@ import { SCHEMA_VERSION, type Placement } from "../src/types";
 
 const NOW = "2026-07-31T12:00:00.000Z";
 
+/**
+ * Freezes a fixture all the way through, so that any in-place write turns
+ * into a TypeError — ES modules are strict mode, where a write to a frozen
+ * object throws rather than being silently dropped.
+ *
+ * This is what turns the first `Migration` rule from a convention into a test.
+ * `migrateV1ToV2` returns a structure partly shared with its input —
+ * `migrate(doc).items` *is* `doc.items` — so a future step doing
+ * `doc.items[0].order = 0` or `doc.placements.sort(...)` would mutate an HTTP
+ * request body while every assertion below still passed. The two "does not
+ * mutate" tests only sample the fields they happen to name; freezing covers
+ * every field, including ones added later.
+ */
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object") {
+    Object.values(value as Record<string, unknown>).forEach(deepFreeze);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 describe("migrate", () => {
   it("returns a current-version document unchanged", () => {
     const doc = createTierList({ id: "list-1", now: NOW });
@@ -35,7 +56,7 @@ describe("migrate", () => {
 describe("schema 1 -> 2: contiguous placement indices", () => {
   /** A v1 document: every tray placement pinned at index 0. */
   function v1(): Record<string, unknown> {
-    return {
+    return deepFreeze({
       ...createTierList({ id: "list-1", now: NOW }),
       schemaVersion: 1,
       items: [
@@ -48,7 +69,7 @@ describe("schema 1 -> 2: contiguous placement indices", () => {
         { itemId: "i1", rowId: null, index: 0 },
         { itemId: "i2", rowId: "list-1-row-0", index: 0 },
       ],
-    };
+    });
   }
 
   it("renumbers tray placements into a contiguous sequence ordered by item order", () => {
@@ -75,7 +96,7 @@ describe("schema 1 -> 2: contiguous placement indices", () => {
    * below the vacated slot shifted the survivors down but not to the front).
    */
   function v1HoledRows(): Record<string, unknown> {
-    return {
+    return deepFreeze({
       ...createTierList({ id: "list-1", now: NOW }),
       schemaVersion: 1,
       items: [
@@ -92,7 +113,7 @@ describe("schema 1 -> 2: contiguous placement indices", () => {
         // Contiguous but never reaching 0.
         { itemId: "d", rowId: "list-1-row-1", index: 3 },
       ],
-    };
+    });
   }
 
   const inRow = (doc: { placements: Placement[] }, rowId: string): Placement[] =>
@@ -149,9 +170,66 @@ describe("schema 1 -> 2: contiguous placement indices", () => {
     expect(doc.placements[1]).toEqual({ itemId: "i1", rowId: null, index: 0 });
   });
 
+  /**
+   * A slot in `placements` is what gets numbered, so the numbering has to be
+   * keyed by the slot. Keying it by the placement object means two slots
+   * holding the same reference are assigned twice, last write wins: no zero,
+   * and a duplicate. `JSON.parse` cannot produce that, but `migrate` is
+   * exported, so an in-process caller can.
+   */
+  it("numbers every slot even when two of them hold the same object", () => {
+    const shared = { itemId: "i1", rowId: null, index: 0 };
+    const doc = migrate({
+      ...createTierList({ id: "list-1", now: NOW }),
+      schemaVersion: 1,
+      items: [
+        { id: "i1", kind: "text", label: "one", edit: {}, order: 0 },
+        { id: "i2", kind: "text", label: "two", edit: {}, order: 1 },
+      ],
+      placements: [shared, shared, { itemId: "i2", rowId: null, index: 0 }],
+    });
+
+    expect([...doc.placements].map((p) => p.index).sort()).toEqual([0, 1, 2]);
+  });
+
   it("stamps the document with the new schema version", () => {
     expect(migrate(v1()).schemaVersion).toBe(SCHEMA_VERSION);
-    expect(SCHEMA_VERSION).toBe(2);
+  });
+
+  /**
+   * The migration touches exactly two fields; nothing checked what happened to
+   * the other twelve, so a step that dropped `title`, `rows`, `display`,
+   * `boardAnnotations`, `createdAt` or `revision` passed every test here.
+   *
+   * Asserting on the whole remainder rather than on a list of field names
+   * catches a dropped field *and* an invented one, and needs no editing when
+   * the model grows a field.
+   */
+  it("changes nothing in the document but placements and schemaVersion", () => {
+    const raw = v1();
+    const { placements: _out, schemaVersion: _v, ...migrated } = migrate(raw);
+    const { placements: _in, schemaVersion: _w, ...original } = raw;
+    expect(migrated).toEqual(original);
+    expect(Object.keys(migrated).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * Replaces an `expect(SCHEMA_VERSION).toBe(2)` change-detector. That worked
+   * by forcing an edit on a bump; this asserts the property the edit was
+   * supposed to prompt — bumping SCHEMA_VERSION to 3 without registering
+   * MIGRATIONS[2] compiles, typechecks, and then throws on the first stored
+   * document at schema 2.
+   *
+   * Behavioural rather than asserting over an exported MIGRATIONS: what
+   * matters is that a v-N document opens, not that the registry has a key, and
+   * a bare `{schemaVersion: n}` doubles as a check that every registered
+   * migration honours the "must not throw on a malformed field" rule.
+   */
+  it("registers a migration from every version below the current one", () => {
+    for (let version = 1; version < SCHEMA_VERSION; version += 1) {
+      expect(() => migrate({ schemaVersion: version })).not.toThrow();
+      expect(migrate({ schemaVersion: version }).schemaVersion).toBe(SCHEMA_VERSION);
+    }
   });
 
   it("does not mutate the document it was given", () => {
@@ -175,5 +253,114 @@ describe("schema 1 -> 2: contiguous placement indices", () => {
     const bare: Record<string, unknown> = { schemaVersion: 1 };
     migrate(bare);
     expect(bare["schemaVersion"]).toBe(1);
+  });
+});
+
+/**
+ * The `Migration` contract forbids throwing on a malformed field, so every
+ * guard in `migrateV1ToV2` has a branch that only a malformed document
+ * reaches. All of them were unexercised. The array-as-placement bug is what an
+ * unpinned defensive branch costs: it had a guard, the guard was wrong, and
+ * nothing said so.
+ *
+ * Each case states the whole output array, so a change of behaviour in a
+ * branch shows up as a diff rather than as a still-passing weaker assertion.
+ */
+describe("schema 1 -> 2: malformed v1 fields", () => {
+  const cases: {
+    name: string;
+    items?: unknown;
+    placements: unknown[];
+    expected: unknown[];
+  }[] = [
+    {
+      // Not a record, so unfilable: no location, and no index consumed — the
+      // real placement behind them still starts at 0.
+      name: "leaves a non-object placement alone and gives it no index",
+      items: [{ id: "a", order: 0 }],
+      placements: ["junk", null, 42, { itemId: "a", rowId: null, index: 7 }],
+      expected: ["junk", null, 42, { itemId: "a", rowId: null, index: 0 }],
+    },
+    {
+      // Filing it would be a guess about which location it belongs to, and
+      // renumbering it in place a guess about its neighbours. It keeps the
+      // index it arrived with, 42, holed though that leaves things.
+      name: "leaves a placement whose rowId is neither string nor null untouched",
+      placements: [{ itemId: "a", rowId: 5, index: 42 }],
+      expected: [{ itemId: "a", rowId: 5, index: 42 }],
+    },
+    {
+      // Nothing has established that itemIds are unique, so the numbering is
+      // keyed by slot. An itemId-keyed map would collapse these to one entry
+      // and leave the other slot un-renumbered.
+      name: "gives duplicate itemIds in one location distinct indices",
+      items: [{ id: "a", order: 0 }],
+      placements: [
+        { itemId: "a", rowId: "r", index: 3 },
+        { itemId: "a", rowId: "r", index: 1 },
+      ],
+      expected: [
+        { itemId: "a", rowId: "r", index: 1 },
+        { itemId: "a", rowId: "r", index: 0 },
+      ],
+    },
+    {
+      // No item orders are recoverable, so every tray key ties at 0 and the
+      // stable sort leaves the array order standing.
+      name: "survives items being present but not an array",
+      items: { nope: true },
+      placements: [
+        { itemId: "a", rowId: null, index: 4 },
+        { itemId: "b", rowId: null, index: 9 },
+      ],
+      expected: [
+        { itemId: "a", rowId: null, index: 0 },
+        { itemId: "b", rowId: null, index: 1 },
+      ],
+    },
+    {
+      // `order` is what the tray is renumbered from. An item carrying none
+      // falls back to its position in `items`, the only ordering signal left:
+      // a is 0, b is 1, so the tray runs a then b.
+      name: "falls back to array position for an item with no numeric order",
+      items: [{ id: "a", order: "first" }, { id: "b" }],
+      placements: [
+        { itemId: "b", rowId: null, index: 0 },
+        { itemId: "a", rowId: null, index: 0 },
+      ],
+      expected: [
+        { itemId: "b", rowId: null, index: 1 },
+        { itemId: "a", rowId: null, index: 0 },
+      ],
+    },
+    {
+      // A row is renumbered from its existing indices; a missing or
+      // non-numeric one sorts as 0, so b and c tie ahead of a and keep array
+      // order. All three are rewritten, so c's string index becomes a number.
+      name: "treats a missing or non-numeric index as 0 when ordering a row",
+      placements: [
+        { itemId: "a", rowId: "r", index: 2 },
+        { itemId: "b", rowId: "r" },
+        { itemId: "c", rowId: "r", index: "1" },
+      ],
+      expected: [
+        { itemId: "a", rowId: "r", index: 2 },
+        { itemId: "b", rowId: "r", index: 0 },
+        { itemId: "c", rowId: "r", index: 1 },
+      ],
+    },
+    {
+      name: "survives an empty placements array",
+      placements: [],
+      expected: [],
+    },
+  ];
+
+  it.each(cases)("$name", ({ items, placements, expected }) => {
+    const doc = migrate(
+      deepFreeze({ schemaVersion: 1, items: items ?? [], placements }),
+    );
+    expect(doc.placements).toEqual(expected);
+    expect(doc.schemaVersion).toBe(SCHEMA_VERSION);
   });
 });

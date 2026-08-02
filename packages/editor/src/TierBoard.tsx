@@ -35,7 +35,14 @@ import {
   truncate,
 } from "./theme";
 import { useBoardFont } from "./useBoardFont";
-import type { ImageCache } from "./useImageCache";
+import type { ImageCache, ImageEntry } from "./useImageCache";
+
+/**
+ * How visible the tile a drag was lifted from stays while the drag is in
+ * flight. Faint enough to read as a vacated slot rather than a second copy of
+ * the item, solid enough that the row does not appear to have lost a tile.
+ */
+const LIFTED_TILE_OPACITY = 0.28;
 
 export interface TierBoardProps {
   doc: TierList;
@@ -139,6 +146,44 @@ export function TierBoard({ doc, width, layout, drag, images }: TierBoardProps) 
     );
   };
 
+  /**
+   * Everything inside a tile: its fill, its image, its strokes and its label.
+   *
+   * Shared by the board's tiles and by the drag preview, so a tile cannot look
+   * like one thing in place and something else under the finger. They were
+   * separate once, and the preview simply never grew an image or strokes —
+   * dragging a picture showed an empty grey box.
+   */
+  const drawTileContent = (item: Item, dest: GeometryRect, entry: ImageEntry | undefined) => {
+    const ready = entry?.status === "ready" ? entry.image : null;
+    return (
+      <>
+        <Rect
+          x={dest.x}
+          y={dest.y}
+          width={dest.width}
+          height={dest.height}
+          color={tileFill(item, entry?.status)}
+        />
+        <Group clip={rect(dest.x, dest.y, dest.width, dest.height)}>
+          {ready ? drawTileImage(item, ready, dest) : null}
+          <StrokeLayer item={item} dest={dest} />
+        </Group>
+        {tileFont && doc.display.showLabels ? (
+          <Text
+            x={dest.x + 4}
+            // Bottom-aligned rather than centred, so it does not sit over the
+            // middle of the picture.
+            y={dest.y + dest.height - 6}
+            text={truncate(item.label ?? "", dest.width - 8, tileSize)}
+            font={tileFont}
+            color={TILE_TEXT}
+          />
+        ) : null}
+      </>
+    );
+  };
+
   // Row tiles and tray tiles are drawn identically; only their source list
   // differs. Keeping one helper means a label change cannot land in one place
   // and not the other.
@@ -149,37 +194,19 @@ export function TierBoard({ doc, width, layout, drag, images }: TierBoardProps) 
     // STATE.md. Skip rather than draw a hole.
     if (!item) return null;
 
-    const entry = item.assetId ? images?.get(item.assetId) : undefined;
-    const ready = entry?.status === "ready" ? entry.image : null;
+    // The tile this drag lifted. It stays drawn — the document does not change
+    // until the drop, so removing it here would make the board flicker and
+    // would be a second source of truth about where the item is. But drawn at
+    // full strength it reads as a *copy* rather than as the thing being moved,
+    // so it is faded to say "this came from here".
+    const lifted = drag?.phase === "dragging" && drag.itemId === item.id;
 
     return (
       // Position is part of the key because migrate() performs no structural
       // validation, so the same item can appear twice in one location. A bare
       // itemId would collide there.
-      <Group key={`${tile.itemId}:${i}`}>
-        <Rect
-          x={tile.rect.x}
-          y={tile.rect.y}
-          width={tile.rect.width}
-          height={tile.rect.height}
-          color={tileFill(item, entry?.status)}
-        />
-        <Group clip={rect(tile.rect.x, tile.rect.y, tile.rect.width, tile.rect.height)}>
-          {ready ? drawTileImage(item, ready, tile.rect) : null}
-          <StrokeLayer item={item} dest={tile.rect} />
-        </Group>
-        {tileFont && doc.display.showLabels ? (
-          <Text
-            x={tile.rect.x + 4}
-            // Bottom-aligned rather than centred: an image tile's label must
-            // not sit over the middle of the picture once Milestone 3 draws
-            // one there.
-            y={tile.rect.y + tile.rect.height - 6}
-            text={truncate(item.label ?? "", tile.rect.width - 8, tileSize)}
-            font={tileFont}
-            color={TILE_TEXT}
-          />
-        ) : null}
+      <Group key={`${tile.itemId}:${i}`} opacity={lifted ? LIFTED_TILE_OPACITY : 1}>
+        {drawTileContent(item, tile.rect, item.assetId ? images?.get(item.assetId) : undefined)}
       </Group>
     );
   };
@@ -245,17 +272,20 @@ export function TierBoard({ doc, width, layout, drag, images }: TierBoardProps) 
 
       {preview && draggedItem ? (
         <Group>
-          <Rect
-            x={preview.x}
-            y={preview.y}
-            width={preview.width}
-            height={preview.height}
-            color={tileFill(draggedItem)}
-          />
           {/*
-            The tile is still drawn in place underneath: the document does not
-            change until the drop, so the border is what distinguishes the copy
-            following the finger from the original it was lifted from.
+            The same content the tile draws in place, not an approximation of
+            it: a drag that showed a blank box for a picture is exactly what
+            this shares `drawTileContent` to prevent.
+          */}
+          {drawTileContent(
+            draggedItem,
+            preview,
+            draggedItem.assetId ? images?.get(draggedItem.assetId) : undefined,
+          )}
+          {/*
+            The tile is still drawn in place underneath, faded — the document
+            does not change until the drop. The border is what marks this as
+            the copy under the finger rather than the one it was lifted from.
           */}
           <Rect
             x={preview.x}
@@ -266,15 +296,6 @@ export function TierBoard({ doc, width, layout, drag, images }: TierBoardProps) 
             style="stroke"
             strokeWidth={2}
           />
-          {tileFont && doc.display.showLabels ? (
-            <Text
-              x={preview.x + 4}
-              y={preview.y + preview.height - 6}
-              text={truncate(draggedItem.label ?? "", preview.width - 8, tileSize)}
-              font={tileFont}
-              color={TILE_TEXT}
-            />
-          ) : null}
         </Group>
       ) : null}
     </Canvas>

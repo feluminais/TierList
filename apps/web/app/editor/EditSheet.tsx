@@ -93,8 +93,18 @@ export interface EditSheetProps {
  */
 export function EditSheet({ item, EditCanvas, assetUrl, onAction, onClose }: EditSheetProps) {
   const [edit, setEdit] = useState<EditState>(idleEdit);
+  // The one source of truth `send` reads and writes. `pointermove` fires
+  // faster than React re-renders — and React batches state updates — so two
+  // moves arriving in the same batch would both call `editReduce` before
+  // either's `setEdit` result had a chance to render. Updating only at render
+  // time (`editRef.current = edit` during the component body) means both
+  // reads see the same stale state and the earlier of the two is silently
+  // lost from the committed stroke. Writing here, synchronously, before
+  // `setEdit`, means the very next event in the same batch reads what the
+  // previous one produced, not what last rendered. There is deliberately no
+  // second assignment elsewhere (e.g. back at render time) — two places that
+  // can each set this ref is exactly the disagreement this fix removes.
   const editRef = useRef(edit);
-  editRef.current = edit;
 
   // Stable for the sheet's lifetime: the canvas never resizes while open.
   const tile = useMemo(() => ({ x: 0, y: 0, width: SHEET_SIZE, height: SHEET_SIZE }), []);
@@ -105,6 +115,7 @@ export function EditSheet({ item, EditCanvas, assetUrl, onAction, onClose }: Edi
 
   const send = (event: EditEvent) => {
     const out = editReduce(editRef.current, event);
+    editRef.current = out.state;
     setEdit(out.state);
     if (out.action) onAction(out.action);
   };
@@ -127,8 +138,14 @@ export function EditSheet({ item, EditCanvas, assetUrl, onAction, onClose }: Edi
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (edit.phase !== "drawing") return;
-    if (edit.points.length / 2 >= MAX_STROKE_SAMPLES) return;
+    // Reads `editRef.current`, not the `edit` state variable this closure was
+    // built with: the same batching that drops points (see `send`) can also
+    // leave this guard looking at the *previous* render's phase, which is
+    // still "idle" for the first move or two right after `penDown` while its
+    // own render is still pending — dropping the start of every stroke.
+    const current = editRef.current;
+    if (current.phase !== "drawing") return;
+    if (current.points.length / 2 >= MAX_STROKE_SAMPLES) return;
     send({ type: "penMove", at: pointFromEvent(event), context });
   };
 

@@ -1,7 +1,8 @@
 import type { Item } from "@tl/core";
-import { imageDrawRect, imagePlacement, toTilePoint, type Rect as GeometryRect } from "@tl/editor-core";
+import { imageDrawRect, imagePlacement, type Rect as GeometryRect } from "@tl/editor-core";
 import { Canvas, Fill, Group, Image, Path, Skia, rect } from "@shopify/react-native-skia";
 import React, { useMemo } from "react";
+import { StrokeLayer } from "./StrokeLayer";
 import { BOARD_BACKGROUND, tileFill } from "./theme";
 import { useImageCache } from "./useImageCache";
 
@@ -50,63 +51,49 @@ export function EditCanvas({ item, size, assetUrl, liveStroke }: EditCanvasProps
   return (
     <Canvas style={{ width: size, height: size }}>
       <Fill color={ready ? BOARD_BACKGROUND : tileFill(item, entry?.status)} />
-      {ready ? (
-        <Group clip={rect(dest.x, dest.y, dest.width, dest.height)}>
-          {(() => {
-            const source = { width: ready.width(), height: ready.height() };
-            const placement = imagePlacement(source, item.edit, dest);
-            const draw = imageDrawRect(placement, source);
-            return (
-              <Image
-                image={ready}
-                x={draw.x}
-                y={draw.y}
-                width={draw.width}
-                height={draw.height}
-                fit="fill"
-              />
-            );
-          })()}
-
-          {item.edit.strokes.map((stroke) => {
-            const path = Skia.Path.Make();
-            for (let p = 0; p + 1 < stroke.points.length; p += 2) {
-              const point = toTilePoint(
-                { x: stroke.points[p]!, y: stroke.points[p + 1]! },
-                dest,
-                item.edit.crop,
+      {/*
+        Always rendered, image or not: a text tile, or an image tile still
+        loading or that failed to decode, still has to show its strokes and
+        the one in progress — `ready` gates only the `<Image>` below. The
+        clip stays unconditional too, for the same reason it is here at all:
+        a stroke drawn before a tighter crop legitimately extends past the
+        tile and must still be clipped.
+      */}
+      <Group clip={rect(dest.x, dest.y, dest.width, dest.height)}>
+        {ready
+          ? (() => {
+              const source = { width: ready.width(), height: ready.height() };
+              const placement = imagePlacement(source, item.edit, dest);
+              const draw = imageDrawRect(placement, source);
+              return (
+                <Image
+                  image={ready}
+                  x={draw.x}
+                  y={draw.y}
+                  width={draw.width}
+                  height={draw.height}
+                  fit="fill"
+                />
               );
-              if (p === 0) path.moveTo(point.x, point.y);
-              else path.lineTo(point.x, point.y);
-            }
-            return (
-              <Path
-                key={stroke.id}
-                path={path}
-                color={stroke.color}
-                style="stroke"
-                strokeWidth={stroke.width}
-                strokeCap="round"
-                strokeJoin="round"
-              />
-            );
-          })}
+            })()
+          : null}
 
-          {/* The stroke still in the user's hand. Drawn last, over every
-              committed one, and never written to the document until penUp —
-              see EditSheet. */}
-          {liveStroke ? (
-            <Path
-              path={livePath(liveStroke.points)}
-              color={liveStroke.color}
-              style="stroke"
-              strokeWidth={liveStroke.width}
-              strokeCap="round"
-              strokeJoin="round"
-            />
-          ) : null}
-        </Group>
-      ) : null}
+        <StrokeLayer item={item} dest={dest} />
+
+        {/* The stroke still in the user's hand. Drawn last, over every
+            committed one, and never written to the document until penUp —
+            see EditSheet. */}
+        {liveStroke ? (
+          <Path
+            path={livePath(liveStroke.points)}
+            color={liveStroke.color}
+            style="stroke"
+            strokeWidth={liveStroke.width}
+            strokeCap="round"
+            strokeJoin="round"
+          />
+        ) : null}
+      </Group>
     </Canvas>
   );
 }

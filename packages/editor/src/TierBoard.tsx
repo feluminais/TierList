@@ -5,7 +5,6 @@ import {
   imagePlacement,
   insertionCaretRect,
   layoutBoard,
-  toTilePoint,
   type BoardLayout,
   type DragState,
   type Rect as GeometryRect,
@@ -16,14 +15,13 @@ import {
   Fill,
   Group,
   Image,
-  Path,
   Rect,
-  Skia,
   Text,
   rect,
   type SkImage,
 } from "@shopify/react-native-skia";
 import React, { useMemo } from "react";
+import { StrokeLayer } from "./StrokeLayer";
 import {
   BOARD_BACKGROUND,
   BOARD_LINE,
@@ -118,12 +116,11 @@ export function TierBoard({ doc, width, layout, drag, images }: TierBoardProps) 
   const draggedItem = drag?.phase === "dragging" ? itemsById.get(drag.itemId) : undefined;
 
   /**
-   * An image and its strokes, both clipped to the tile.
-   *
-   * The clip is what makes a crop a crop: the whole image is drawn, scaled and
-   * offset by `imageDrawRect` so the cropped region covers the tile, and
-   * everything outside is discarded here. Strokes are clipped by the same group
-   * because a stroke drawn before a tighter crop legitimately extends past it.
+   * A tile's image, scaled and offset by `imageDrawRect` so the cropped
+   * region covers the tile. Does not clip and does not draw strokes — see
+   * `drawTile`, which wraps this (when there is an image to draw) and
+   * `StrokeLayer` (always) in one clipping `Group`, so strokes render
+   * whether or not the tile has a ready image.
    */
   const drawTileImage = (item: Item, image: SkImage, dest: GeometryRect) => {
     const size = { width: image.width(), height: image.height() };
@@ -131,39 +128,14 @@ export function TierBoard({ doc, width, layout, drag, images }: TierBoardProps) 
     const draw = imageDrawRect(placement, size);
 
     return (
-      <Group clip={rect(dest.x, dest.y, dest.width, dest.height)}>
-        <Image
-          image={image}
-          x={draw.x}
-          y={draw.y}
-          width={draw.width}
-          height={draw.height}
-          fit="fill"
-        />
-        {item.edit.strokes.map((stroke) => {
-          const path = Skia.Path.Make();
-          for (let p = 0; p + 1 < stroke.points.length; p += 2) {
-            const point = toTilePoint(
-              { x: stroke.points[p]!, y: stroke.points[p + 1]! },
-              dest,
-              item.edit.crop,
-            );
-            if (p === 0) path.moveTo(point.x, point.y);
-            else path.lineTo(point.x, point.y);
-          }
-          return (
-            <Path
-              key={stroke.id}
-              path={path}
-              color={stroke.color}
-              style="stroke"
-              strokeWidth={stroke.width}
-              strokeCap="round"
-              strokeJoin="round"
-            />
-          );
-        })}
-      </Group>
+      <Image
+        image={image}
+        x={draw.x}
+        y={draw.y}
+        width={draw.width}
+        height={draw.height}
+        fit="fill"
+      />
     );
   };
 
@@ -192,7 +164,10 @@ export function TierBoard({ doc, width, layout, drag, images }: TierBoardProps) 
           height={tile.rect.height}
           color={tileFill(item, entry?.status)}
         />
-        {ready ? drawTileImage(item, ready, tile.rect) : null}
+        <Group clip={rect(tile.rect.x, tile.rect.y, tile.rect.width, tile.rect.height)}>
+          {ready ? drawTileImage(item, ready, tile.rect) : null}
+          <StrokeLayer item={item} dest={tile.rect} />
+        </Group>
         {tileFont && doc.display.showLabels ? (
           <Text
             x={tile.rect.x + 4}

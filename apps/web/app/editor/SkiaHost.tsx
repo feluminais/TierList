@@ -21,6 +21,7 @@ import {
   type ComponentType,
 } from "react";
 import { EditSheet, type EditCanvasComponent } from "./EditSheet";
+import { TileEditOverlay } from "./TileEditButton";
 import { Toolbar } from "./Toolbar";
 import { useApiClient } from "./useApiClient";
 import { useAssetUpload } from "./useAssetUpload";
@@ -31,6 +32,8 @@ type BoardProps = {
   width: number;
   onAction: (action: TierListAction) => void;
   onTap?: (itemId: string) => void;
+  onDraggingChange?: (dragging: boolean) => void;
+  immediateDrag?: boolean;
   assetIds?: readonly string[];
   assetUrl?: (assetId: string) => string;
 };
@@ -99,6 +102,30 @@ export default function SkiaHost() {
     }
     setListId(id);
   }, []);
+
+  // Whether this device has a mouse (or other precise pointer) rather than
+  // only touch. Read in an effect, not during render, for the same reason
+  // `listId` is: `matchMedia` does not exist on the server, and a render-time
+  // read would make the server and the first client render disagree. Starts
+  // false — the touch-first behaviour — so hydration matches, then flips
+  // immediately after mount on a device that actually has one.
+  //
+  // Decided here, not inside `@tl/editor`: `dragReduce` and `InteractiveBoard`
+  // are shared with the Android app and must stay platform-agnostic, so the
+  // device check belongs to this web-only caller.
+  const [pointerFine, setPointerFine] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia("(pointer: fine)");
+    const update = () => setPointerFine(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  // True for the span of a drag. `InteractiveBoard` reports it precisely so a
+  // parent can react — here, to hide the hover edit button while a tile is
+  // being dragged rather than edited.
+  const [dragging, setDragging] = useState(false);
 
   // The document, its history and its saved state, together. `null` for the
   // synced revision says the server has never seen this document, so the first
@@ -224,9 +251,16 @@ export default function SkiaHost() {
     [dispatch],
   );
 
-  // Which tile a tap opened a sheet for, if any. `onTap` is the handler
+  // Which tile a sheet is open for, if any. `onTap` is the handler
   // `useBoardGesture`/`dragReduce` have had a slot for since Milestone 2D —
   // "2D gives this a meaning" never happened until now.
+  //
+  // Below, this only reaches the board as `onTap` when `!pointerFine`: a
+  // hover-capable device gets the corner button instead (a click is free once
+  // a drag starts immediately, so a plain tap opening the sheet would take
+  // over the click a drag also wants). Touch keeps `onTap`, because touch has
+  // no hover and would otherwise have no way to reach the sheet at all —
+  // giving it a real affordance of its own is Milestone 8's problem.
   const [editing, setEditing] = useState<string | null>(null);
   const onTap = useCallback((itemId: string) => setEditing(itemId), []);
   const editingItem = editing
@@ -295,16 +329,36 @@ export default function SkiaHost() {
         // scroll container of its own — the page scrolls — so there is no
         // viewport to measure a pointer against and no scroller to drive. It is
         // exercised on mobile, where the board sits inside a ScrollView.
-        <div style={{ touchAction: "none", width: BOARD_WIDTH }}>
-          <Board
-            doc={session.doc}
-            width={BOARD_WIDTH}
-            onAction={dispatch}
-            onTap={onTap}
-            assetIds={assetIds}
-            assetUrl={assetUrl}
-          />
-        </div>
+        //
+        // The hover overlay is only mounted on a hover-capable device: touch
+        // has no hover to track and no need for the extra wrapper, so the
+        // touch path stays exactly what it was.
+        pointerFine ? (
+          <TileEditOverlay doc={session.doc} width={BOARD_WIDTH} dragging={dragging} onEdit={onTap}>
+            <div style={{ touchAction: "none", width: BOARD_WIDTH }}>
+              <Board
+                doc={session.doc}
+                width={BOARD_WIDTH}
+                onAction={dispatch}
+                onDraggingChange={setDragging}
+                immediateDrag
+                assetIds={assetIds}
+                assetUrl={assetUrl}
+              />
+            </div>
+          </TileEditOverlay>
+        ) : (
+          <div style={{ touchAction: "none", width: BOARD_WIDTH }}>
+            <Board
+              doc={session.doc}
+              width={BOARD_WIDTH}
+              onAction={dispatch}
+              onTap={onTap}
+              assetIds={assetIds}
+              assetUrl={assetUrl}
+            />
+          </div>
+        )
       )}
       {editingItem && EditCanvasComp ? (
         <EditSheet

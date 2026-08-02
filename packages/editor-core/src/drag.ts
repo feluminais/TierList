@@ -29,6 +29,9 @@ export type DragState =
       itemId: string;
       origin: PointerSample;
       pointer: Point;
+      /** Carried from the `down` that started this press. See `DragEvent`'s
+       *  `immediate` field for what it means and why it lives here. */
+      immediate: boolean;
     }
   | {
       phase: "dragging";
@@ -44,7 +47,28 @@ export type DragState =
     };
 
 export type DragEvent =
-  | { type: "down"; at: PointerSample; layout: BoardLayout }
+  | {
+      type: "down";
+      at: PointerSample;
+      layout: BoardLayout;
+      /**
+       * This input can begin a drag on movement alone, without waiting out
+       * `DRAG_HOLD_MS`.
+       *
+       * Named for what it means, not for a device, because this module is
+       * shared with the Android app and must stay platform-agnostic — the
+       * same reason it takes `time` from its caller instead of reading a
+       * clock. A mouse is the caller that sets this: its wheel scrolls, so
+       * press-and-drag can never be mistaken for a scroll the way a touch
+       * drag can, and the 250ms wait that protects a touch screen would only
+       * read as a broken click here.
+       *
+       * Defaults to false (see the `down` handling in `dragReduce`), so a
+       * caller that never sets it — every existing one — keeps exactly the
+       * hold-then-slop behaviour it always had.
+       */
+      immediate?: boolean;
+    }
   | { type: "move"; at: PointerSample; layout: BoardLayout }
   | { type: "hold"; at: PointerSample; layout: BoardLayout }
   | { type: "up"; at: PointerSample; layout: BoardLayout }
@@ -158,6 +182,7 @@ export function dragReduce(state: DragState, event: DragEvent): DragResult {
         itemId: hit.itemId,
         origin: event.at,
         pointer: event.at.point,
+        immediate: event.immediate ?? false,
       });
     }
 
@@ -176,6 +201,12 @@ export function dragReduce(state: DragState, event: DragEvent): DragResult {
       // A janky frame on a mid-range Android can swallow every move of a
       // flick and deliver the first one after the hold window has passed.
       if (distance(event.at.point, state.origin.point) > DRAG_SLOP_PX) {
+        // Unless this press said up front that movement alone may start a
+        // drag: a mouse has no scroll to steal, so what would cancel a touch
+        // press instead promotes it — through the same `promote` a hold
+        // uses, so the tile is grabbed exactly as it would be there and does
+        // not jump under the cursor at this instant.
+        if (state.immediate) return promote(state, event.at, event.layout);
         return result(idleDrag(), { releaseToScroll: true });
       }
 

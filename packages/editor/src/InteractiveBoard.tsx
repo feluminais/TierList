@@ -46,6 +46,13 @@ export interface InteractiveBoardProps {
    * reports.
    */
   onDraggingChange?: (dragging: boolean) => void;
+  /**
+   * Lets a press begin dragging on movement alone, without the touch hold.
+   * See `useBoardGesture`'s option of the same name. Left to the caller
+   * rather than detected here: this component is shared with the Android
+   * app, and only a web caller can tell a mouse from a touch screen.
+   */
+  immediateDrag?: boolean;
 }
 
 /**
@@ -71,6 +78,7 @@ export function InteractiveBoard({
   scrollY,
   onAutoScroll,
   onDraggingChange,
+  immediateDrag,
   assetIds = EMPTY_ASSET_IDS,
   assetUrl = emptyAssetUrl,
 }: InteractiveBoardProps) {
@@ -83,6 +91,7 @@ export function InteractiveBoard({
     viewportHeight,
     scrollY,
     onAutoScroll,
+    immediateDrag,
   });
 
   // Narrowed to a boolean before it becomes a dependency, so a parent is told

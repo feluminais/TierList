@@ -41,6 +41,15 @@ export interface BoardGestureOptions {
   scrollY?: number;
   /** Called each frame while the pointer sits in an edge band. */
   onAutoScroll?: (delta: number) => void;
+  /**
+   * Forwarded verbatim into every `down` event's `immediate` flag — see
+   * `DragEvent` in `@tl/editor-core` for what it means. This hook does not
+   * decide which inputs get it; the device check belongs to a caller that
+   * knows it is running on the web, not to this hook or to `dragReduce`,
+   * both of which are shared with the Android app. Defaults to false, so a
+   * caller that never passes it keeps the existing hold-then-drag behaviour.
+   */
+  immediateDrag?: boolean;
 }
 
 export interface BoardGesture {
@@ -68,7 +77,15 @@ export interface BoardGesture {
  * the layout's origin. `InteractiveBoard` is what guarantees that.
  */
 export function useBoardGesture(options: BoardGestureOptions): BoardGesture {
-  const { layout, onAction, onTap, viewportHeight, scrollY, onAutoScroll } = options;
+  const {
+    layout,
+    onAction,
+    onTap,
+    viewportHeight,
+    scrollY,
+    onAutoScroll,
+    immediateDrag = false,
+  } = options;
 
   const [drag, setDrag] = useState<DragState>(idleDrag);
 
@@ -140,7 +157,12 @@ export function useBoardGesture(options: BoardGestureOptions): BoardGesture {
     onResponderGrant: (e: GestureResponderEvent) => {
       const point = pointOf(e);
       lastPoint.current = point;
-      send({ type: "down", at: { point, time: Date.now() }, layout: layoutRef.current });
+      send({
+        type: "down",
+        at: { point, time: Date.now() },
+        layout: layoutRef.current,
+        immediate: immediateDrag,
+      });
 
       // A stationary finger produces no move events, so the promotion to a
       // drag has to be driven by a timer. `dragReduce` ignores a `hold` that

@@ -534,6 +534,89 @@ describe("the hold and slop boundaries", () => {
   });
 });
 
+describe("immediate drags (mouse)", () => {
+  function pressImmediate(layout: BoardLayout, point: Point) {
+    return dragReduce(idleDrag(), {
+      type: "down",
+      at: { point, time: 0 },
+      layout,
+      immediate: true,
+    });
+  }
+
+  it("promotes on a move past slop when immediate is set, without waiting for the hold", () => {
+    const down = pressImmediate(LAYOUT, TILE_1);
+    const moved = dragReduce(down.state, {
+      type: "move",
+      at: { point: { x: TILE_1.x, y: TILE_1.y + DRAG_SLOP_PX + 1 }, time: 1 },
+      layout: LAYOUT,
+    });
+    expect(moved.state.phase).toBe("dragging");
+    expect(moved.releaseToScroll).toBe(false);
+  });
+
+  it("still releases to the scroller on the same move when immediate is not set", () => {
+    const down = press(LAYOUT, TILE_1);
+    const moved = dragReduce(down.state, {
+      type: "move",
+      at: { point: { x: TILE_1.x, y: TILE_1.y + DRAG_SLOP_PX + 1 }, time: 1 },
+      layout: LAYOUT,
+    });
+    expect(moved.state.phase).toBe("idle");
+    expect(moved.releaseToScroll).toBe(true);
+  });
+
+  // Mirrors "grabs the tile where the finger is, so it does not jump on
+  // pickup" in the slop-boundary suite below: the immediate path promotes
+  // through the very same `promote` the hold path uses, so it must compute
+  // `grab` the identical way — from the sample that triggers the promotion
+  // and the tile's rect, not from the original press.
+  it("grabs the tile the same way the hold path would, for the same press and point", () => {
+    const point = { x: TILE_1.x, y: TILE_1.y + DRAG_SLOP_PX + 1 };
+    const promoted = dragReduce(pressImmediate(LAYOUT, TILE_1).state, {
+      type: "move",
+      at: { point, time: 1 },
+      layout: LAYOUT,
+    });
+
+    const tile = LAYOUT.rows[0]!.tiles[1]!.rect;
+    expect(promoted.state).toMatchObject({
+      phase: "dragging",
+      grab: { x: point.x - tile.x, y: point.y - tile.y },
+    });
+  });
+
+  it("still treats a press and release with no movement as a tap when immediate is set", () => {
+    const down = pressImmediate(LAYOUT, TILE_1);
+    const up = dragReduce(down.state, {
+      type: "up",
+      at: { point: TILE_1, time: 10 },
+      layout: LAYOUT,
+    });
+    expect(up.state.phase).toBe("idle");
+    expect(up.action).toBeNull();
+    expect(up.tapped).toEqual({ itemId: "i1" });
+  });
+
+  it("still promotes on a genuine hold when immediate is set and the user holds before moving", () => {
+    const down = pressImmediate(LAYOUT, TILE_1);
+    const held = dragReduce(down.state, {
+      type: "hold",
+      at: { point: TILE_1, time: DRAG_HOLD_MS },
+      layout: LAYOUT,
+    });
+    expect(held.state.phase).toBe("dragging");
+
+    // ...and behaves exactly like an ordinary hold-promoted drag from there.
+    const dropped = dragReduce(held.state, {
+      type: "up",
+      at: { point: ROW_A, time: DRAG_HOLD_MS + 100 },
+      layout: LAYOUT,
+    });
+    expect(dropped.action).toMatchObject({ rowId: A, index: 0 });
+  });
+});
+
 describe("when the layout changes under the finger", () => {
   // A sync from another device can delete the item between the press and the
   // hold. Dragging on would emit a place for an item the document no longer

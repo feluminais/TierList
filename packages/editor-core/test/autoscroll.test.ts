@@ -98,6 +98,7 @@ describe("pointerAfterScroll", () => {
       itemId: "i1",
       origin: { point: { x: 300, y: 500 }, time: 0 },
       pointer: { x: 300, y: 500 },
+      immediate: false,
     };
     expect(pointerAfterScroll(pending, 0, 40)).toBeNull();
   });

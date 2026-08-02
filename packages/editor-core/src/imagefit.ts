@@ -136,33 +136,60 @@ export function imagePlacement(
 }
 
 /**
- * Where to draw the **whole** image so that its crop lands exactly on the tile.
+ * Where to draw the **whole** image so that its crop covers the tile.
  *
  * Skia's Image node draws an entire image into a destination rect; it has no
  * source-rect parameter. Showing a crop therefore means drawing the whole
  * image scaled up and shifted so the wanted region covers the tile, and letting
  * the tile's clip discard the rest. This function is that shift.
  *
- * The axes scale independently. They are usually equal — the crop is
- * aspect-locked to the tile — but deriving one from the other would reintroduce
- * exactly the clamp-then-derive defect that shipped twice in 3A, where a value
- * computed from an already-constrained one escaped its own bound.
+ * The two axes scale by **one shared factor** — the larger of the two ratios
+ * needed to cover the tile — never by independent `scaleX`/`scaleY` values.
+ * An earlier version of this function scaled the axes independently on the
+ * theory that deriving one from the other would reintroduce the
+ * clamp-then-derive defect that shipped twice in 3A (a value computed from an
+ * already-constrained one escaping its own bound). That reasoning conflated
+ * two unrelated things: "don't derive one clamped value from another" is a
+ * real lesson about *dependent* clamps, but a single scale applied identically
+ * to both axes is not a derivation of one axis from the other at all — it is
+ * the same number used twice. Independent scaling's actual effect was to
+ * stretch the image whenever the crop's aspect ratio did not exactly match the
+ * tile's, and that mismatch is reachable even though the crop is meant to be
+ * aspect-locked at upload (`defaultCropFor`): `display.tileAspect` is a user
+ * setting that can change after the crop was chosen, and `migrate()` performs
+ * no structural validation, so a stored document can carry a crop of any
+ * shape at all.
+ *
+ * A single scale means a mismatched crop is *cropped further* by the tile's
+ * clip rather than distorted — the image's own aspect ratio is preserved, and
+ * the tile is always fully covered (never letterboxed: the board has no
+ * sensible letterbox colour, and the aspect lock means this should not
+ * ordinarily be needed anyway).
  */
 export function imageDrawRect(
   placement: ImagePlacement,
   size: SourceSize,
 ): Rect {
-  if (placement.source.width <= 0 || placement.source.height <= 0) {
+  const { source, dest } = placement;
+  if (source.width <= 0 || source.height <= 0) {
     throw new Error("imageDrawRect: source rect has zero area");
   }
 
-  const scaleX = placement.dest.width / placement.source.width;
-  const scaleY = placement.dest.height / placement.source.height;
+  // The larger ratio is what "cover" means: scaling by the smaller one would
+  // leave the other axis short of the tile.
+  const scale = Math.max(dest.width / source.width, dest.height / source.height);
+
+  // Centred on the tile: zero when the crop's aspect already matches the
+  // tile's (source.width*scale === dest.width and source.height*scale ===
+  // dest.height then hold simultaneously), so the matching case reduces to
+  // exactly the old formula and its corners still land on the tile's corners.
+  const offsetX = (dest.width - source.width * scale) / 2;
+  const offsetY = (dest.height - source.height * scale) / 2;
 
   return {
-    x: placement.dest.x - placement.source.x * scaleX,
-    y: placement.dest.y - placement.source.y * scaleY,
-    width: size.width * scaleX,
-    height: size.height * scaleY,
+    x: dest.x + offsetX - source.x * scale,
+    y: dest.y + offsetY - source.y * scale,
+    width: size.width * scale,
+    height: size.height * scale,
   };
 }

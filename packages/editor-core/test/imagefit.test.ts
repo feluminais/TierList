@@ -191,21 +191,26 @@ describe("imageDrawRect", () => {
     expect(rect).toEqual({ x: 0, y: 0, width: 100, height: 100 });
   });
 
-  // The crop is the right half column of a 200x200 image, keeping its full
-  // height: 100px wide by 200px tall against a 100x100 tile. The width axis
-  // scales 1:1 (source is already 100px wide) so the whole 200px-wide image
-  // is drawn at width 200; the height axis scales by 0.5 (200 source px into
-  // a 100px tile) so the whole 200px-tall image is drawn at height 100. (The
-  // plan this test was transcribed from asserted height: 200 here, which
-  // fails the corner invariant checked below — the bottom source edge at
-  // y=200 would land at 0 + 200*0.5 = 100, matching the tile's bottom, only
-  // when height is 100.)
-  it("offsets and scales so the crop lands on the tile", () => {
+  // The crop is a 100x200 (portrait) slice of a 200x200 image against a
+  // square 100x100 tile — the crop's aspect (2) does not match the tile's (1).
+  // A single scale is chosen to *cover* the tile: the width axis needs ×1
+  // (source is already 100px wide) and the height axis needs ×0.5 (200 source
+  // px into a 100px tile); the larger, ×1, wins, so the width axis lands
+  // exactly on the tile and the height axis overflows it symmetrically
+  // (centred), to be discarded by the tile's clip. Distorting the image to
+  // make both axes land exactly — the pre-fix behaviour — is exactly the bug
+  // this invariant rules out.
+  it("covers the tile without distortion when the crop's aspect does not match", () => {
     const rect = imageDrawRect(
       { source: { x: 100, y: 0, width: 100, height: 200 }, dest: TILE_100 },
       { width: 200, height: 200 },
     );
-    expect(rect).toEqual({ x: -100, y: 0, width: 200, height: 100 });
+    // scale = max(100/100, 100/200) = 1. The whole 200x200 image is drawn at
+    // 200x200 (uniformly, not stretched), shifted so the crop (the right
+    // 100x200 slice) covers the 100x100 tile, centred vertically: the crop
+    // draws at (0, -50, 100, 200), which overflows the tile by 50px on both
+    // top and bottom.
+    expect(rect).toEqual({ x: -100, y: -50, width: 200, height: 200 });
   });
 
   it("honours a tile that is not at the origin", () => {
@@ -217,32 +222,78 @@ describe("imageDrawRect", () => {
     expect(rect).toEqual({ x: 10 - 100, y: 20 - 50, width: 200, height: 200 });
   });
 
-  it("scales the axes independently when the crop is not the tile's shape", () => {
+  // A landscape crop (200x100) against a square tile: the mirror image of the
+  // portrait case above. The larger required scale, ×1 on the height axis,
+  // wins; the width axis overflows the tile symmetrically instead.
+  it("covers the tile without distortion when the crop is wider than the tile", () => {
     const rect = imageDrawRect(
       { source: { x: 0, y: 0, width: 200, height: 100 }, dest: { x: 0, y: 0, width: 100, height: 100 } },
       { width: 200, height: 100 },
     );
-    expect(rect).toEqual({ x: 0, y: 0, width: 100, height: 100 });
+    expect(rect).toEqual({ x: -50, y: 0, width: 200, height: 100 });
   });
 
-  // The invariant that matters: whatever the numbers, the crop's corners must
-  // land exactly on the tile's corners.
-  it("puts the crop's corners on the tile's corners, for any input", () => {
-    const cases = [
-      [{ x: 0, y: 0, width: 640, height: 480 }, { width: 640, height: 480 }],
-      [{ x: 13, y: 97, width: 200, height: 150 }, { width: 1920, height: 1080 }],
-      [{ x: 999, y: 1, width: 1, height: 1 }, { width: 1000, height: 1000 }],
-    ] as const;
-    const dest = { x: 7, y: 11, width: 123, height: 45 };
-    for (const [source, size] of cases) {
-      const rect = imageDrawRect({ source, dest }, size);
-      const scaleX = rect.width / size.width;
-      const scaleY = rect.height / size.height;
-      expect(rect.x + source.x * scaleX).toBeCloseTo(dest.x, 6);
-      expect(rect.y + source.y * scaleY).toBeCloseTo(dest.y, 6);
-      expect(rect.x + (source.x + source.width) * scaleX).toBeCloseTo(dest.x + dest.width, 6);
-      expect(rect.y + (source.y + source.height) * scaleY).toBeCloseTo(dest.y + dest.height, 6);
-    }
+  // When the crop's own aspect already equals the tile's, the invariant is the
+  // strict one from before this fix: the crop's four corners land exactly on
+  // the tile's four corners, with no overflow to clip away.
+  describe("when the crop's aspect equals the tile's", () => {
+    it("puts the crop's corners exactly on the tile's corners", () => {
+      const dest = { x: 7, y: 11, width: 120, height: 45 };
+      // Every source rect below shares dest's aspect (120/45 = 8/3).
+      const cases = [
+        [{ x: 0, y: 0, width: 640, height: 240 }, { width: 640, height: 240 }],
+        [{ x: 13, y: 97, width: 320, height: 120 }, { width: 1920, height: 1080 }],
+        [{ x: 800, y: 1, width: 80, height: 30 }, { width: 1000, height: 1000 }],
+      ] as const;
+      for (const [source, size] of cases) {
+        const rect = imageDrawRect({ source, dest }, size);
+        const scaleX = rect.width / size.width;
+        const scaleY = rect.height / size.height;
+        expect(scaleX).toBeCloseTo(scaleY, 9);
+        expect(rect.x + source.x * scaleX).toBeCloseTo(dest.x, 6);
+        expect(rect.y + source.y * scaleY).toBeCloseTo(dest.y, 6);
+        expect(rect.x + (source.x + source.width) * scaleX).toBeCloseTo(dest.x + dest.width, 6);
+        expect(rect.y + (source.y + source.height) * scaleY).toBeCloseTo(dest.y + dest.height, 6);
+      }
+    });
+  });
+
+  // When the crop's aspect differs from the tile's, corners can no longer be
+  // expected to land on the tile's corners — that would require distorting
+  // the image. What must still hold: the drawn rect covers the tile entirely,
+  // stays centred on it, and never distorts the source (its own aspect ratio
+  // survives exactly, because one scale applies to both axes).
+  describe("when the crop's aspect differs from the tile's", () => {
+    it("covers the tile, stays centred, and preserves the source's aspect ratio", () => {
+      const dest = { x: 7, y: 11, width: 120, height: 45 };
+      const cases = [
+        [{ x: 0, y: 0, width: 640, height: 480 }, { width: 640, height: 480 }],
+        [{ x: 13, y: 97, width: 200, height: 150 }, { width: 1920, height: 1080 }],
+        [{ x: 999, y: 1, width: 1, height: 1 }, { width: 1000, height: 1000 }],
+      ] as const;
+      for (const [source, size] of cases) {
+        const rect = imageDrawRect({ source, dest }, size);
+
+        // The drawn image's own aspect ratio is untouched — a single scale
+        // was applied to both axes of the whole image.
+        expect(rect.width / size.width).toBeCloseTo(rect.height / size.height, 9);
+
+        // The crop (the mapped source rect) covers dest entirely...
+        const scale = rect.width / size.width;
+        const cropLeft = rect.x + source.x * scale;
+        const cropTop = rect.y + source.y * scale;
+        const cropRight = cropLeft + source.width * scale;
+        const cropBottom = cropTop + source.height * scale;
+        expect(cropLeft).toBeLessThanOrEqual(dest.x + 1e-6);
+        expect(cropTop).toBeLessThanOrEqual(dest.y + 1e-6);
+        expect(cropRight).toBeGreaterThanOrEqual(dest.x + dest.width - 1e-6);
+        expect(cropBottom).toBeGreaterThanOrEqual(dest.y + dest.height - 1e-6);
+
+        // ...and is centred on it: the overflow on opposite edges matches.
+        expect(dest.x - cropLeft).toBeCloseTo(cropRight - (dest.x + dest.width), 6);
+        expect(dest.y - cropTop).toBeCloseTo(cropBottom - (dest.y + dest.height), 6);
+      }
+    });
   });
 
   it("refuses a zero-sized source rect rather than dividing by it", () => {
@@ -252,5 +303,89 @@ describe("imageDrawRect", () => {
         { width: 10, height: 10 },
       ),
     ).toThrow(/zero/i);
+  });
+
+  // The exact case reported from a real upload: a 2000x1345 WebP into a
+  // square 112 tile with a full-frame crop. Before this fix, scaleX
+  // (112/2000 = 0.056) and scaleY (112/1345 = 0.0833) were applied
+  // independently, stretching the image ~48.7% taller than it should be.
+  describe("the reported distortion bug", () => {
+    it("does not stretch a 2000x1345 source into a square 112 tile", () => {
+      const source: SourceSize = { width: 2000, height: 1345 };
+      const tile = { x: 0, y: 0, width: 112, height: 112 };
+      const placement = imagePlacement(source, editWith({ x: 0, y: 0, w: 1, h: 1 }), tile);
+      const rect = imageDrawRect(placement, source);
+
+      // No distortion: the drawn rect's aspect ratio equals the source's.
+      expect(rect.width / source.width).toBeCloseTo(rect.height / source.height, 9);
+
+      // The tile is fully covered.
+      expect(rect.x).toBeLessThanOrEqual(tile.x + 1e-6);
+      expect(rect.y).toBeLessThanOrEqual(tile.y + 1e-6);
+      expect(rect.x + rect.width).toBeGreaterThanOrEqual(tile.x + tile.width - 1e-6);
+      expect(rect.y + rect.height).toBeGreaterThanOrEqual(tile.y + tile.height - 1e-6);
+    });
+  });
+
+  // A deterministic PRNG rather than Math.random(): reproducible on failure,
+  // still exercises a wide spread of sources, tiles and crops.
+  describe("fuzz", () => {
+    function mulberry32(seed: number): () => number {
+      let a = seed;
+      return () => {
+        a |= 0;
+        a = (a + 0x6d2b79f5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    it("always preserves the source's aspect ratio and covers the tile", () => {
+      const rand = mulberry32(20260802);
+      const between = (min: number, max: number) => min + rand() * (max - min);
+
+      for (let i = 0; i < 500; i++) {
+        const source: SourceSize = {
+          width: between(1, 4000),
+          height: between(1, 4000),
+        };
+        const tileAspect = [1, 4 / 3, 3 / 4][Math.floor(rand() * 3)]!;
+        const tileWidth = between(1, 500);
+        const tile = {
+          x: between(-100, 100),
+          y: between(-100, 100),
+          width: tileWidth,
+          height: tileWidth * tileAspect,
+        };
+        // Half the cases use the aspect-locked crop (matches the tile); the
+        // other half use a random crop, which usually will not.
+        const crop =
+          rand() < 0.5
+            ? defaultCropFor(source, tileAspect)
+            : {
+                x: between(0, 0.5),
+                y: between(0, 0.5),
+                w: between(0.1, 1),
+                h: between(0.1, 1),
+              };
+
+        const placement = imagePlacement(source, editWith(crop), tile);
+        const rect = imageDrawRect(placement, source);
+
+        expect(rect.width / source.width).toBeCloseTo(rect.height / source.height, 6);
+
+        const scale = rect.width / source.width;
+        const cropLeft = rect.x + placement.source.x * scale;
+        const cropTop = rect.y + placement.source.y * scale;
+        const cropRight = cropLeft + placement.source.width * scale;
+        const cropBottom = cropTop + placement.source.height * scale;
+        const eps = Math.max(1e-6, tile.width * 1e-6);
+        expect(cropLeft).toBeLessThanOrEqual(tile.x + eps);
+        expect(cropTop).toBeLessThanOrEqual(tile.y + eps);
+        expect(cropRight).toBeGreaterThanOrEqual(tile.x + tile.width - eps);
+        expect(cropBottom).toBeGreaterThanOrEqual(tile.y + tile.height - eps);
+      }
+    });
   });
 });

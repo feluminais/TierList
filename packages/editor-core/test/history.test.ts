@@ -439,6 +439,46 @@ describe("mergeKeyFor", () => {
     expect(mergeKeyFor({ type: "meta/set", patch: {} })).toBeNull();
     expect(mergeKeyFor({ type: "display/set", patch: {} })).toBeNull();
   });
+
+  it("keys a dragged per-row tile size, per row", () => {
+    expect(mergeKeyFor({ type: "row/setTileSize", rowId: "r1", tileSize: 120 })).toBe(
+      "row/tileSize:r1",
+    );
+    expect(mergeKeyFor({ type: "row/setTileSize", rowId: "r1", tileSize: 120 })).not.toBe(
+      mergeKeyFor({ type: "row/setTileSize", rowId: "r2", tileSize: 120 }),
+    );
+  });
+
+  /**
+   * Clearing is a discrete choice, not a continuation of the drag before it.
+   * Merged into that drag, one undo would step back past both and the size the
+   * user had just dialled in would be unreachable.
+   */
+  it("does not key clearing a per-row override", () => {
+    expect(mergeKeyFor({ type: "row/setTileSize", rowId: "r1", tileSize: null })).toBeNull();
+  });
+
+  /**
+   * The crop gesture emits `item/setEdit`, which stays unkeyed for the same
+   * reason the pen's does: the action replaces a whole `ImageEdit` and cannot
+   * say which part of it moved, so a run of them must not collapse into one
+   * undo step. Coalescing happens in `cropReduce`, at the gesture boundary.
+   */
+  it("still does not key item/setEdit", () => {
+    expect(
+      mergeKeyFor({
+        type: "item/setEdit",
+        itemId: "i1",
+        edit: {
+          crop: { x: 0, y: 0, w: 1, h: 1 },
+          rotation: 0,
+          zoom: 1,
+          offset: { x: 0, y: 0 },
+          strokes: [],
+        },
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("revision discipline over long random sessions", () => {

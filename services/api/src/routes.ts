@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { requireOwner, type AuthVars } from "./auth";
 import { sniffImage } from "./image";
 import { RevisionConflictError, type Repository } from "./repository";
+import { generateShareCode, isPlausibleShareCode } from "./sharecode";
 import type { ObjectStore } from "./store";
 import { generateToken, hashToken } from "./tokens";
 
@@ -245,6 +246,118 @@ export function createRoutes(deps: RouteDeps) {
         "cache-control": "public, max-age=31536000, immutable",
       },
     });
+  });
+
+  /**
+   * Create — or return — the public link for a list.
+   *
+   * Idempotent by design: a list has at most one code for its whole life, so a
+   * second call gets the first call's code back rather than a new one. A link
+   * that has been pasted into a chat has to keep working, and two live codes
+   * for one list would mean the OG image cached against one of them is
+   * silently not the one a reader gets.
+   *
+   * `ogAssetId` is optional and is an ordinary asset the *client* uploaded.
+   * The design doc specifies OG images "generated server-side at share time…
+   * reusing the @tl/editor render path headlessly via canvaskit-wasm"; this is
+   * a deliberate deviation, and the reason is that the client has already
+   * rendered exactly that picture. `@tl/editor` is a React + react-native-skia
+   * component tree, and there is no headless renderer for it in Node — running
+   * it server-side would mean a *second* drawing implementation over raw
+   * canvaskit, which is precisely the arrangement that let `imageDrawRect`
+   * distort every image for a whole milestone while its own tests stayed
+   * green. Snapshotting the editor's live canvas guarantees the preview and
+   * the board agree because they are the same pixels, and it lands in the same
+   * public, immutable, cache-forever asset path a tile image already uses. The
+   * cost is that a share created by a client that could not snapshot has no
+   * preview image, which degrades to a link with a title and no picture.
+   */
+  routes.post("/lists/:id/share", requireOwner(deps.repository), async (c) => {
+    // Hono types this as possibly undefined for a path with a segment *after*
+    // the parameter (`/lists/:id/share`), unlike `/lists/:id`. It cannot
+    // actually be undefined — the route would not have matched — but the guard
+    // is a real answer rather than a cast, and 404 is what an empty id would
+    // have produced two lines later anyway.
+    const listId = c.req.param("id");
+    if (!listId) return c.json({ error: "not found" }, 404);
+
+    const ownerId = c.get("ownerId");
+    const body = (await c.req.json().catch(() => null)) as { ogAssetId?: unknown } | null;
+
+    const ogAssetId =
+      typeof body?.ogAssetId === "string" && isPlausibleAssetId(body.ogAssetId)
+        ? body.ogAssetId
+        : null;
+
+    // Unknown id and someone else's id give the same answer, exactly as PATCH
+    // does: telling a stranger which list ids exist is a leak no legitimate
+    // client needs.
+    const currentOwner = await deps.repository.findOwner(listId);
+    if (currentOwner === null || currentOwner !== ownerId) {
+      return c.json({ error: "not found" }, 404);
+    }
+
+    const existing = await deps.repository.findShareByList(listId);
+    if (existing) {
+      if (ogAssetId && ogAssetId !== existing.ogAssetId) {
+        await deps.repository.setShareOgAsset(existing.code, ogAssetId);
+      }
+      return c.json({ code: existing.code, ogAssetId: ogAssetId ?? existing.ogAssetId }, 200);
+    }
+
+    // A collision is a lost race, not an error: 40 bits of code space makes it
+    // vanishingly rare, and retrying is cheaper than reporting a failure the
+    // caller can do nothing about. Bounded so a genuinely broken generator
+    // (one returning a constant, say) surfaces as a 500 rather than spinning.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = generateShareCode();
+      const claimed = await deps.repository.createShare({
+        code,
+        listId,
+        ownerId,
+        ogAssetId,
+        createdAt: new Date(),
+      });
+      if (claimed) return c.json({ code, ogAssetId }, 201);
+    }
+    return c.json({ error: "could not allocate a share code" }, 500);
+  });
+
+  /**
+   * Read a shared list by its code. Deliberately unauthenticated — the whole
+   * point of a share code is that holding it is the authorisation.
+   *
+   * Returns the document rather than a redirect to `/lists/:id`, so a reader
+   * never learns the list id and cannot use it against the owned endpoints.
+   */
+  routes.get("/shares/:code", async (c) => {
+    const code = c.req.param("code");
+    if (!isPlausibleShareCode(code)) return c.json({ error: "not found" }, 404);
+
+    const share = await deps.repository.findShareByCode(code);
+    if (!share) return c.json({ error: "not found" }, 404);
+
+    const doc = await deps.repository.load(share.listId);
+    // A share whose list has gone is a dead link, not a server fault.
+    if (!doc) return c.json({ error: "not found" }, 404);
+
+    /**
+     * The intrinsic size of every image the document references.
+     *
+     * Not a nicety. A public page renders the board as HTML without decoding
+     * anything — that is what keeps CanvasKit off the critical path — and a
+     * crop is stored as a *fraction of the source*, so which pixels a tile
+     * shows depends on the source's own aspect ratio. Without these the page
+     * can only fall back to a plain centred cover, which is a different
+     * picture from the one the author framed. The editor never needs them
+     * because it has the decoded image in hand.
+     */
+    const assetIds = [
+      ...new Set(doc.items.map((i) => i.assetId).filter((a): a is string => !!a)),
+    ];
+    const assets = await deps.repository.findAssetSizes(assetIds);
+
+    return c.json({ document: doc, ogAssetId: share.ogAssetId, assets });
   });
 
   return routes;

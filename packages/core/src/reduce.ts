@@ -78,6 +78,35 @@ function apply(doc: TierList, action: TierListAction): TierList {
       };
     }
 
+    case "row/setTileSize": {
+      const row = doc.rows.find((r) => r.id === action.rowId);
+      if (!row) return doc;
+      // Setting the size a row already has — which a slider does on every
+      // frame it is dragged without crossing a step boundary — is a genuine
+      // no-op, so the same reference goes back and `reduce()` skips the
+      // revision bump and the autosave it would otherwise trigger.
+      // `?? null` on the left because an absent override and an explicit null
+      // are the same state and must compare equal.
+      if ((row.tileSizeOverride ?? null) === action.tileSize) return doc;
+
+      return {
+        ...doc,
+        rows: doc.rows.map((r) => {
+          if (r.id !== action.rowId) return r;
+          if (action.tileSize === null) {
+            // The key is deleted rather than set to undefined: the document is
+            // serialised to JSON and stored, and `{tileSizeOverride: undefined}`
+            // and `{}` round-trip to the same thing — so leaving the key in
+            // place would make a cleared row compare unequal to a row that
+            // never had an override, in memory but not after a reload.
+            const { tileSizeOverride: _cleared, ...rest } = r;
+            return rest;
+          }
+          return { ...r, tileSizeOverride: action.tileSize };
+        }),
+      };
+    }
+
     case "row/reorder": {
       const from = doc.rows.findIndex((r) => r.id === action.rowId);
       if (from === -1) return doc;

@@ -196,6 +196,12 @@ export function mergeKeyFor(action: TierListAction): string | null {
       return patchKey("display", action.patch, CONTINUOUS_DISPLAY);
     case "row/rename":
       return `row/rename:${action.rowId}`;
+    case "row/setTileSize":
+      // Dragging a size is continuous and coalesces per row. *Clearing* it is
+      // a discrete choice and gets its own step: merged into the drag that
+      // preceded it, one undo would jump back past both and the size the user
+      // had just dialled in would be unreachable.
+      return action.tileSize === null ? null : `row/tileSize:${action.rowId}`;
     default:
       return null;
   }

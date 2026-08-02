@@ -1,13 +1,16 @@
 import { migrate, type TierList } from "@tl/core";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   assets,
   deviceTokens,
+  shares,
   tierLists,
   type AssetRow,
   type NewAssetRow,
+  type NewShareRow,
   type NewTierListRow,
+  type ShareRow,
 } from "./schema";
 
 /**
@@ -59,6 +62,36 @@ export interface Repository {
    * owner so no two owners ever share a storage key.
    */
   findAssetByChecksum: (ownerId: string, checksum: string) => Promise<AssetRow | null>;
+  /**
+   * The intrinsic sizes of several assets at once, by id.
+   *
+   * Exists for the public share page, which has to lay an image out *without*
+   * decoding it — and cannot, from the document alone: a crop is a fraction of
+   * the source, so what the tile shows depends on the source's own aspect
+   * ratio. One query rather than one request per tile is the difference
+   * between a page that opens fast and one that does not.
+   *
+   * Deliberately not scoped to an owner: a reader of a shared list is not its
+   * owner, and these are exactly the assets that endpoint already serves
+   * publicly.
+   */
+  findAssetSizes: (
+    ids: readonly string[],
+  ) => Promise<{ id: string; width: number; height: number }[]>;
+  /**
+   * Claims a share code. Returns false, changing nothing, when the code is
+   * already taken — so the caller can generate another and try again rather
+   * than take a 500 on a collision it is entitled to lose.
+   *
+   * Deliberately not an upsert on `listId` either: a second row for a list
+   * that already has one must fail, because a list's code must never change
+   * once it has been pasted somewhere.
+   */
+  createShare: (row: NewShareRow) => Promise<boolean>;
+  findShareByCode: (code: string) => Promise<ShareRow | null>;
+  findShareByList: (listId: string) => Promise<ShareRow | null>;
+  /** Points an existing share at a (re-rendered) OG image. */
+  setShareOgAsset: (code: string, ogAssetId: string) => Promise<void>;
 }
 
 /** The single place projected columns are derived from the document. */
@@ -201,6 +234,43 @@ export function createRepository(db: Db): Repository {
         .where(and(eq(assets.ownerId, ownerId), eq(assets.checksum, checksum)))
         .limit(1);
       return rows[0] ?? null;
+    },
+
+    async findAssetSizes(ids) {
+      // `inArray` with an empty list builds `in ()`, which is a syntax error in
+      // Postgres. A document with no image tiles is entirely ordinary.
+      if (ids.length === 0) return [];
+      return db
+        .select({ id: assets.id, width: assets.width, height: assets.height })
+        .from(assets)
+        .where(inArray(assets.id, [...ids]));
+    },
+
+    async createShare(row) {
+      // Targeted at the code alone. A conflict on `listId` — a second share for
+      // a list that already has one — is *not* something to swallow: it means
+      // the caller skipped the read that should have found the existing code,
+      // and silently doing nothing would return a code that names another row.
+      const inserted = await db
+        .insert(shares)
+        .values(row)
+        .onConflictDoNothing({ target: shares.code })
+        .returning({ code: shares.code });
+      return inserted.length > 0;
+    },
+
+    async findShareByCode(code) {
+      const rows = await db.select().from(shares).where(eq(shares.code, code)).limit(1);
+      return rows[0] ?? null;
+    },
+
+    async findShareByList(listId) {
+      const rows = await db.select().from(shares).where(eq(shares.listId, listId)).limit(1);
+      return rows[0] ?? null;
+    },
+
+    async setShareOgAsset(code, ogAssetId) {
+      await db.update(shares).set({ ogAssetId }).where(eq(shares.code, code));
     },
   };
 }

@@ -10,6 +10,13 @@ export type TierListAction =
   | { type: "row/rename"; rowId: string; label: string }
   | { type: "row/recolor"; rowId: string; color: string }
   | { type: "row/remove"; rowId: string }
+  /**
+   * Per-row tile size. `null` clears the override, returning the row to
+   * `display.tileSize` — deliberately a value of this action rather than a
+   * separate `row/clearTileSize`, so a control that can both set and clear has
+   * one action to emit and the reducer has one branch to keep correct.
+   */
+  | { type: "row/setTileSize"; rowId: string; tileSize: number | null }
   | { type: "row/reorder"; rowId: string; toIndex: number }
   | { type: "item/addText"; id: string; label: string }
   | {

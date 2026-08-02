@@ -1,5 +1,13 @@
 import { migrate, type TierList } from "@tl/core";
-import type { AssetResponse, ListSummary, TokenResponse, WriteResponse } from "./types";
+import type {
+  AssetResponse,
+  AssetSize,
+  ListSummary,
+  ShareResponse,
+  SharedList,
+  TokenResponse,
+  WriteResponse,
+} from "./types";
 
 export class ApiError extends Error {
   constructor(
@@ -35,6 +43,16 @@ export interface Client {
   uploadAsset: (bytes: Uint8Array, contentType: string) => Promise<AssetResponse>;
   /** Where an asset's bytes are served from. Public — no token involved. */
   assetUrl: (id: string) => string;
+  /**
+   * Creates the list's public link, or returns the one it already has.
+   *
+   * Idempotent: a list keeps one code for its whole life, so this is safe to
+   * call every time the user presses Share. `ogAssetId` names an already
+   * uploaded image to use as the link preview.
+   */
+  shareList: (listId: string, ogAssetId?: string) => Promise<ShareResponse>;
+  /** Reads a shared list by code. Public — no token involved. */
+  getShare: (code: string) => Promise<SharedList | null>;
 }
 
 export function createClient(options: ClientOptions): Client {
@@ -124,6 +142,36 @@ export function createClient(options: ClientOptions): Client {
         body: bytes as any,
       });
       return (await expectOk(res)) as AssetResponse;
+    },
+
+    async shareList(listId, ogAssetId) {
+      const res = await call(`/lists/${encodeURIComponent(listId)}/share`, {
+        method: "POST",
+        body: ogAssetId === undefined ? {} : { ogAssetId },
+        auth: true,
+      });
+      return (await expectOk(res)) as ShareResponse;
+    },
+
+    async getShare(code) {
+      const res = await call(`/shares/${encodeURIComponent(code)}`, {
+        method: "GET",
+        auth: false,
+      });
+      if (res.status === 404) return null;
+      const body = (await expectOk(res)) as {
+        document: unknown;
+        ogAssetId?: string | null;
+        assets?: AssetSize[];
+      };
+      // migrate() decides what a document means, on both sides of the wire —
+      // and a public page renders whatever comes back, so this is the boundary
+      // that has to refuse a document it does not understand.
+      return {
+        document: migrate(body.document),
+        ogAssetId: body.ogAssetId ?? null,
+        assets: body.assets ?? [],
+      };
     },
 
     assetUrl(id) {

@@ -1,8 +1,18 @@
 "use client";
 
+import type { TileAspect } from "@tl/core";
 import type { EditorSession } from "@tl/editor-core";
 import { useState, type CSSProperties, type FormEvent } from "react";
 import type { Connection } from "./useApiClient";
+
+/** "All rows" — the global `display.tileSize` rather than any one row. */
+const GLOBAL = "";
+
+const ASPECTS: { value: TileAspect; label: string }[] = [
+  { value: "square", label: "Square" },
+  { value: "portrait", label: "Portrait" },
+  { value: "landscape", label: "Landscape" },
+];
 
 export interface ToolbarProps {
   session: EditorSession;
@@ -24,6 +34,24 @@ export interface ToolbarProps {
   /** Current global tile size, and how to change it. */
   tileSize: number;
   onTileSize: (size: number) => void;
+  /**
+   * Per-row override. `null` clears it, returning the row to `tileSize`.
+   *
+   * The agreed shape for tile scaling was "a toolbar control **plus** a
+   * per-row override", and only the global half shipped. Both live on one
+   * slider here rather than two: which one it drives is a choice the user
+   * makes in the selector beside it, and a second slider that looked
+   * identical and meant something else is how the two get confused.
+   */
+  onRowTileSize: (rowId: string, size: number | null) => void;
+  onTileAspect: (aspect: TileAspect) => void;
+  /** Export handlers. Null while the canvas has not loaded and cannot snapshot. */
+  onExportImage: ((format: "png" | "jpg") => void) | null;
+  onExportJson: () => void;
+  onShare: (() => void) | null;
+  sharing: boolean;
+  shareUrl: string | null;
+  shareError: string | null;
 }
 
 /**
@@ -45,8 +73,27 @@ export function Toolbar({
   uploadError,
   tileSize,
   onTileSize,
+  onRowTileSize,
+  onTileAspect,
+  onExportImage,
+  onExportJson,
+  onShare,
+  sharing,
+  shareUrl,
+  shareError,
 }: ToolbarProps) {
   const [draft, setDraft] = useState("");
+  /** Which row the size slider drives, or `GLOBAL` for `display.tileSize`. */
+  const [sizeTarget, setSizeTarget] = useState<string>(GLOBAL);
+
+  const rows = [...session.doc.rows].sort((a, b) => a.order - b.order);
+  // A row can be removed while it is selected. Falling back to the global
+  // target keeps the slider driving something real rather than emitting
+  // actions against an id the document no longer has, which the reducer would
+  // silently ignore — a slider that moves and changes nothing.
+  const targetRow = rows.find((r) => r.id === sizeTarget) ?? null;
+  const effectiveTarget = targetRow ? sizeTarget : GLOBAL;
+  const sliderValue = targetRow ? (targetRow.tileSizeOverride ?? tileSize) : tileSize;
 
   function submitItem(event: FormEvent) {
     event.preventDefault();
@@ -103,6 +150,21 @@ export function Toolbar({
 
       <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#888" }}>
         Tile
+        <select
+          aria-label="Tile size applies to"
+          data-testid="tile-size-target"
+          value={effectiveTarget}
+          onChange={(event) => setSizeTarget(event.target.value)}
+          style={field}
+        >
+          <option value={GLOBAL}>All rows</option>
+          {rows.map((row) => (
+            <option key={row.id} value={row.id}>
+              {row.label || "(unnamed)"}
+              {row.tileSizeOverride === undefined ? "" : " ✓"}
+            </option>
+          ))}
+        </select>
         <input
           aria-label="Tile size"
           data-testid="tile-size"
@@ -110,9 +172,41 @@ export function Toolbar({
           min={48}
           max={200}
           step={4}
-          value={tileSize}
-          onChange={(event) => onTileSize(Number(event.target.value))}
+          value={sliderValue}
+          onChange={(event) => {
+            const size = Number(event.target.value);
+            if (targetRow) onRowTileSize(targetRow.id, size);
+            else onTileSize(size);
+          }}
         />
+        {targetRow && targetRow.tileSizeOverride !== undefined ? (
+          <button
+            type="button"
+            data-testid="tile-size-reset"
+            title="Use the list's tile size for this row"
+            onClick={() => onRowTileSize(targetRow.id, null)}
+            style={button(false)}
+          >
+            Reset
+          </button>
+        ) : null}
+      </label>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#888" }}>
+        Shape
+        <select
+          aria-label="Tile shape"
+          data-testid="tile-aspect"
+          value={session.doc.display.tileAspect}
+          onChange={(event) => onTileAspect(event.target.value as TileAspect)}
+          style={field}
+        >
+          {ASPECTS.map((a) => (
+            <option key={a.value} value={a.value}>
+              {a.label}
+            </option>
+          ))}
+        </select>
       </label>
 
       <button
@@ -133,6 +227,63 @@ export function Toolbar({
       >
         Redo
       </button>
+
+      <button
+        type="button"
+        data-testid="export-png"
+        onClick={() => onExportImage?.("png")}
+        disabled={!onExportImage}
+        style={button(!onExportImage)}
+        title="Download the board as a PNG"
+      >
+        PNG
+      </button>
+      <button
+        type="button"
+        data-testid="export-jpg"
+        onClick={() => onExportImage?.("jpg")}
+        disabled={!onExportImage}
+        style={button(!onExportImage)}
+        title="Download the board as a JPG"
+      >
+        JPG
+      </button>
+      <button
+        type="button"
+        data-testid="export-json"
+        onClick={onExportJson}
+        style={button(false)}
+        title="Download the document — the answer to “it's just a picture”"
+      >
+        JSON
+      </button>
+      <button
+        type="button"
+        data-testid="share"
+        onClick={() => onShare?.()}
+        disabled={!onShare || sharing}
+        style={button(!onShare || sharing)}
+        title="Create a public link"
+      >
+        {sharing ? "Sharing…" : "Share"}
+      </button>
+
+      {shareUrl ? (
+        <input
+          aria-label="Share link"
+          data-testid="share-url"
+          readOnly
+          value={shareUrl}
+          onFocus={(event) => event.target.select()}
+          style={{ ...field, width: 260, fontSize: 12 }}
+        />
+      ) : null}
+
+      {shareError ? (
+        <span data-testid="share-error" role="alert" style={{ ...readout, ...warned }}>
+          {shareError}
+        </span>
+      ) : null}
 
       {uploadError ? (
         <span data-testid="upload-error" role="alert" style={{ ...readout, ...warned }}>

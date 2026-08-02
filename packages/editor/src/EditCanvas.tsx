@@ -17,8 +17,18 @@ export interface LiveStroke {
 
 export interface EditCanvasProps {
   item: Item;
-  /** Both dimensions: the canvas is always square, one tile's worth. */
-  size: number;
+  /**
+   * The canvas's own size, in css px.
+   *
+   * Both dimensions, rather than one square `size`. The canvas *is* the tile
+   * (see below), and a tile is only square when `display.tileAspect` says so —
+   * so a square sheet showing a portrait tile would draw a different crop of
+   * the image than the board does, and every crop the user framed here would
+   * land on the board with its top and bottom cut off. Once `tileAspect` is
+   * reachable from the toolbar that stops being hypothetical.
+   */
+  width: number;
+  height: number;
   assetUrl: (assetId: string) => string;
   liveStroke: LiveStroke | null;
 }
@@ -39,17 +49,17 @@ export interface EditCanvasProps {
  * decode of one image is a cost worth paying for not threading a cache
  * instance across that boundary.
  */
-export function EditCanvas({ item, size, assetUrl, liveStroke }: EditCanvasProps) {
+export function EditCanvas({ item, width, height, assetUrl, liveStroke }: EditCanvasProps) {
   const assetIds = useMemo(() => (item.assetId ? [item.assetId] : []), [item.assetId]);
   const images = useImageCache(assetIds, assetUrl);
   const entry = item.assetId ? images.get(item.assetId) : undefined;
   const ready = entry?.status === "ready" ? entry.image : null;
 
   // The canvas *is* the tile: no offset, no scale relative to the board.
-  const dest: GeometryRect = { x: 0, y: 0, width: size, height: size };
+  const dest: GeometryRect = { x: 0, y: 0, width, height };
 
   return (
-    <Canvas style={{ width: size, height: size }}>
+    <Canvas style={{ width, height }}>
       <Fill color={ready ? BOARD_BACKGROUND : tileFill(item, entry?.status)} />
       {/*
         Always rendered, image or not: a text tile, or an image tile still

@@ -95,3 +95,40 @@ export const assets = pgTable(
 
 export type AssetRow = typeof assets.$inferSelect;
 export type NewAssetRow = typeof assets.$inferInsert;
+
+/**
+ * A public link to a list.
+ *
+ * The code is the primary key rather than a column beside a surrogate one:
+ * every read of a share is by code, and a second identity for the same row
+ * would only be a way for the two to disagree.
+ *
+ * `listId` is unique, so a list has at most one code for its whole life.
+ * Re-sharing returns the code that already exists instead of minting a second:
+ * a link that has been pasted somewhere must keep working, and two live codes
+ * for one list would mean the OG image cached against one of them is silently
+ * not the one a reader gets.
+ *
+ * `ogAssetId` points into `assets` — the same table uploads land in, and
+ * therefore the same public, immutable, cache-forever read path. The OG image
+ * is rendered by the client through the editor's own Skia canvas and uploaded
+ * like any other image; see the route for why that beats rendering it here.
+ * Nullable because a share is still a valid, working link before one exists.
+ *
+ * `ownerId` is denormalised from the list so a re-share can be authorised
+ * without loading the whole document.
+ */
+export const shares = pgTable(
+  "shares",
+  {
+    code: text("code").primaryKey(),
+    listId: text("list_id").notNull(),
+    ownerId: text("owner_id").notNull(),
+    ogAssetId: text("og_asset_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [uniqueIndex("shares_list_idx").on(t.listId)],
+);
+
+export type ShareRow = typeof shares.$inferSelect;
+export type NewShareRow = typeof shares.$inferInsert;

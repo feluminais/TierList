@@ -3,7 +3,6 @@
 import { findTile, hitTest, layoutBoard, type Rect } from "@tl/editor-core";
 import type { TierList } from "@tl/core";
 import {
-  useEffect,
   useMemo,
   useState,
   type CSSProperties,
@@ -35,17 +34,6 @@ const MAX_SIZE = 26;
 export function TileEditButton({ rect, onEdit }: TileEditButtonProps) {
   const size = Math.max(MIN_SIZE, Math.min(MAX_SIZE, rect.width * 0.26));
 
-  // Starts hidden and nudged in, then flips to its resting state one frame
-  // after mounting — the transition below only has something to animate
-  // *from* because of this. Rendering already-settled on the first frame
-  // would make the fade a no-op: there is no earlier style for the browser to
-  // transition away from.
-  const [entered, setEntered] = useState(false);
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => setEntered(true));
-    return () => cancelAnimationFrame(frame);
-  }, []);
-
   const style: CSSProperties = {
     position: "absolute",
     left: rect.x + rect.width - size - INSET,
@@ -66,9 +54,14 @@ export function TileEditButton({ rect, onEdit }: TileEditButtonProps) {
     // `TileEditOverlay`, whose own layer is `pointerEvents: "none"` precisely
     // so this is the only thing in it a click can land on.
     pointerEvents: "auto",
-    opacity: entered ? 1 : 0,
-    transform: entered ? "scale(1)" : "scale(0.85)",
-    transition: "opacity 120ms ease-out, transform 120ms ease-out",
+    // The entrance is a CSS keyframe (`globals.css`), not a state flip
+    // scheduled on `requestAnimationFrame`. The rAF version worked but failed
+    // *closed*: where rAF is throttled or deferred the callback never runs and
+    // the button stays invisible while still taking clicks. An animation runs
+    // from the element's own style with nothing to schedule, and where
+    // animations do not run at all the element simply renders settled — the
+    // failure is open in both directions.
+    animation: "tl-tile-edit-button-in 120ms ease-out",
   };
 
   return (

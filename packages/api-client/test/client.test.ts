@@ -205,3 +205,80 @@ describe("assets", () => {
     expect(client.assetUrl("a?b")).toBe("https://api.test/assets/a%3Fb");
   });
 });
+
+describe("shares", () => {
+  it("creates a share with the bearer token and no ogAssetId key when none is given", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ code: "ABCDEFGH", ogAssetId: null }, 201));
+    const client = createClient({ baseUrl: BASE, token: "secret", fetch: fetchFn });
+
+    const result = await client.shareList("list-1");
+
+    expect(result).toEqual({ code: "ABCDEFGH", ogAssetId: null });
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(url).toBe(`${BASE}/lists/list-1/share`);
+    expect(init.method).toBe("POST");
+    expect(init.headers.authorization).toBe("Bearer secret");
+    // An absent key, not `{"ogAssetId": null}`: the route reads a string or
+    // nothing, and sending an explicit null would be a third state to handle.
+    expect(JSON.parse(init.body as string)).toEqual({});
+  });
+
+  it("passes an ogAssetId through when given one", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ code: "ABCDEFGH", ogAssetId: "a1" }));
+    const client = createClient({ baseUrl: BASE, token: "secret", fetch: fetchFn });
+
+    await client.shareList("list-1", "a1");
+
+    expect(JSON.parse(fetchFn.mock.calls[0]![1].body as string)).toEqual({ ogAssetId: "a1" });
+  });
+
+  it("encodes a list id that would otherwise break the path", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ code: "ABCDEFGH", ogAssetId: null }));
+    const client = createClient({ baseUrl: BASE, token: "s", fetch: fetchFn });
+
+    await client.shareList("a/b?c");
+
+    expect(fetchFn.mock.calls[0]![0]).toBe(`${BASE}/lists/a%2Fb%3Fc/share`);
+  });
+
+  it("reads a share without sending authorization, and migrates the document", async () => {
+    const doc = createTierList({ id: "list-1", now: NOW });
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ document: doc, ogAssetId: "a1" }));
+    const client = createClient({ baseUrl: BASE, token: "secret", fetch: fetchFn });
+
+    const result = await client.getShare("ABCDEFGH");
+
+    expect(result?.document.id).toBe("list-1");
+    expect(result?.ogAssetId).toBe("a1");
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(url).toBe(`${BASE}/shares/ABCDEFGH`);
+    // Public by design: holding the code is the authorisation, and sending a
+    // token would make a shared page behave differently for its own author.
+    expect(init.headers.authorization).toBeUndefined();
+  });
+
+  it("returns null for an unknown code rather than throwing", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ error: "not found" }, 404));
+    const client = createClient({ baseUrl: BASE, fetch: fetchFn });
+    expect(await client.getShare("ABCDEFGH")).toBeNull();
+  });
+
+  it("normalises a missing ogAssetId to null", async () => {
+    const doc = createTierList({ id: "list-1", now: NOW });
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ document: doc }));
+    const client = createClient({ baseUrl: BASE, fetch: fetchFn });
+    expect((await client.getShare("ABCDEFGH"))?.ogAssetId).toBeNull();
+  });
+
+  it("raises an ApiError for any other failure", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ error: "boom" }, 500));
+    const client = createClient({ baseUrl: BASE, fetch: fetchFn });
+    await expect(client.getShare("ABCDEFGH")).rejects.toBeInstanceOf(ApiError);
+  });
+});

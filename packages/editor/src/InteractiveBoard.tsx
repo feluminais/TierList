@@ -1,7 +1,9 @@
 import type { TierList, TierListAction } from "@tl/core";
 import { layoutBoard } from "@tl/editor-core";
-import React, { useEffect, useMemo } from "react";
+import type { CanvasRef } from "@shopify/react-native-skia";
+import React, { useEffect, useMemo, useRef } from "react";
 import { View } from "react-native";
+import { encodeBoardImage, type BoardExporter } from "./export";
 import { TierBoard } from "./TierBoard";
 import { useBoardGesture } from "./useBoardGesture";
 import { useImageCache } from "./useImageCache";
@@ -53,6 +55,18 @@ export interface InteractiveBoardProps {
    * app, and only a web caller can tell a mouse from a touch screen.
    */
   immediateDrag?: boolean;
+  /**
+   * Handed an exporter once the canvas exists, and `null` on unmount.
+   *
+   * A callback rather than a ref the host creates, because the host cannot:
+   * `apps/web`'s `SkiaHost` must not evaluate this package at module scope
+   * (CanvasKit has to be on the global first), so it has no way to name a
+   * `CanvasRef` or reach `encodeBoardImage`. It receives a plain object with
+   * one method instead, the same way it receives the components themselves.
+   *
+   * Must be a stable reference — it keys the effect below.
+   */
+  onExporterReady?: (exporter: BoardExporter | null) => void;
 }
 
 /**
@@ -79,6 +93,7 @@ export function InteractiveBoard({
   onAutoScroll,
   onDraggingChange,
   immediateDrag,
+  onExporterReady,
   assetIds = EMPTY_ASSET_IDS,
   assetUrl = emptyAssetUrl,
 }: InteractiveBoardProps) {
@@ -103,9 +118,27 @@ export function InteractiveBoard({
 
   const images = useImageCache(assetIds, assetUrl);
 
+  // Reads `canvasRef.current` at call time rather than closing over it, so the
+  // exporter object stays valid for the component's whole life and the host is
+  // told exactly twice — once on mount and once on unmount — instead of on
+  // every render that replaced the canvas.
+  const canvasRef = useRef<CanvasRef | null>(null);
+  useEffect(() => {
+    if (!onExporterReady) return;
+    onExporterReady({ toImage: (format) => encodeBoardImage(canvasRef.current, format) });
+    return () => onExporterReady(null);
+  }, [onExporterReady]);
+
   return (
     <View style={{ width, height: layout.contentHeight }} {...handlers}>
-      <TierBoard doc={doc} width={width} layout={layout} drag={drag} images={images} />
+      <TierBoard
+        doc={doc}
+        width={width}
+        layout={layout}
+        drag={drag}
+        images={images}
+        canvasRef={canvasRef}
+      />
     </View>
   );
 }

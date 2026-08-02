@@ -1,7 +1,14 @@
 "use client";
 
 import type { AssetResponse } from "@tl/api-client";
-import { createTierList, defaultImageEdit, reduce, type TierList, type TierListAction } from "@tl/core";
+import {
+  createTierList,
+  defaultImageEdit,
+  reduce,
+  type TierList,
+  type TierListAction,
+  type TileAspect,
+} from "@tl/core";
 import {
   applyAction,
   aspectRatioFor,
@@ -21,12 +28,25 @@ import {
   useState,
   type ComponentType,
 } from "react";
+import { downloadBytes, filenameFor } from "./download";
 import { EditSheet, type EditCanvasComponent } from "./EditSheet";
 import { TileEditOverlay } from "./TileEditButton";
 import { Toolbar } from "./Toolbar";
 import { useApiClient } from "./useApiClient";
 import { useAssetUpload } from "./useAssetUpload";
 import { useAutosave, type AutosaveHandlers } from "./useAutosave";
+import { useShare } from "./useShare";
+
+/**
+ * `@tl/editor`'s `BoardExporter`, restated rather than imported — the same
+ * constraint that makes `EditSheet` restate `EditCanvas`'s props. Nothing
+ * Skia-related may be named at module scope in this file, and a type-only
+ * import still ties the module to a package that builds its Skia API object
+ * when it loads.
+ */
+type BoardExporterLike = {
+  toImage: (format: "png" | "jpg") => { bytes: Uint8Array; contentType: string } | null;
+};
 
 type BoardProps = {
   doc: TierList;
@@ -35,6 +55,7 @@ type BoardProps = {
   onTap?: (itemId: string) => void;
   onDraggingChange?: (dragging: boolean) => void;
   immediateDrag?: boolean;
+  onExporterReady?: (exporter: BoardExporterLike | null) => void;
   assetIds?: readonly string[];
   assetUrl?: (assetId: string) => string;
 };
@@ -273,6 +294,61 @@ export default function SkiaHost() {
     (tileSize: number) => dispatch({ type: "display/set", patch: { tileSize } }),
     [dispatch],
   );
+  const onRowTileSize = useCallback(
+    (rowId: string, tileSize: number | null) =>
+      dispatch({ type: "row/setTileSize", rowId, tileSize }),
+    [dispatch],
+  );
+  const onTileAspect = useCallback(
+    (tileAspect: TileAspect) => dispatch({ type: "display/set", patch: { tileAspect } }),
+    [dispatch],
+  );
+
+  // Handed over by `InteractiveBoard` once its canvas exists, and taken back
+  // on unmount. Null means "there is nothing to snapshot yet", which is what
+  // greys out the image export buttons rather than letting a click fail.
+  const [exporter, setExporter] = useState<BoardExporterLike | null>(null);
+  // Stable: it keys the effect inside `InteractiveBoard` that calls it, and an
+  // unstable one would hand over a fresh exporter on every render.
+  const onExporterReady = useCallback(
+    (next: BoardExporterLike | null) => setExporter(() => next),
+    [],
+  );
+
+  const onExportImage = useCallback(
+    (format: "png" | "jpg") => {
+      const image = exporter?.toImage(format);
+      if (!image) return;
+      downloadBytes(image.bytes, image.contentType, filenameFor(session.doc.title, format));
+    },
+    [exporter, session.doc.title],
+  );
+
+  /**
+   * The document itself, as a file.
+   *
+   * The design doc's answer to "it's just a picture after you create it", and
+   * cheap precisely because the document already *is* the source of truth —
+   * there is nothing to serialise that autosave does not already send. Pretty
+   * printed: this is meant to be readable by whoever receives it.
+   */
+  const onExportJson = useCallback(() => {
+    downloadBytes(
+      JSON.stringify(session.doc, null, 2),
+      "application/json",
+      filenameFor(session.doc.title, "json"),
+    );
+  }, [session.doc]);
+
+  // JPEG for the link preview, not PNG: a board of photographs encodes to a
+  // fraction of the size, and "opens fast" is half of what this milestone is
+  // for. Every OG consumer accepts JPEG.
+  const ogImage = useCallback(() => exporter?.toImage("jpg") ?? null, [exporter]);
+  const shareUrlFor = useCallback(
+    (code: string) => `${window.location.origin}/l/${code}`,
+    [],
+  );
+  const sharing = useShare(client, listId, ogImage, shareUrlFor);
 
   // Which tile a sheet is open for, if any. `onTap` is the handler
   // `useBoardGesture`/`dragReduce` have had a slot for since Milestone 2D —
@@ -347,6 +423,14 @@ export default function SkiaHost() {
         uploadError={upload.error}
         tileSize={session.doc.display.tileSize}
         onTileSize={onTileSize}
+        onRowTileSize={onRowTileSize}
+        onTileAspect={onTileAspect}
+        onExportImage={exporter ? onExportImage : null}
+        onExportJson={onExportJson}
+        onShare={client && listId ? sharing.share : null}
+        sharing={sharing.sharing}
+        shareUrl={sharing.url}
+        shareError={sharing.error}
       />
       {error ? (
         <pre style={{ color: "#f88", padding: 16 }}>{error}</pre>
@@ -385,6 +469,7 @@ export default function SkiaHost() {
                 onAction={dispatch}
                 onDraggingChange={setDragging}
                 immediateDrag
+                onExporterReady={onExporterReady}
                 assetIds={assetIds}
                 assetUrl={assetUrl}
               />
@@ -397,6 +482,7 @@ export default function SkiaHost() {
               width={boardWidth}
               onAction={dispatch}
               onTap={onTap}
+              onExporterReady={onExporterReady}
               assetIds={assetIds}
               assetUrl={assetUrl}
             />
@@ -407,6 +493,11 @@ export default function SkiaHost() {
         <EditSheet
           item={editingItem}
           EditCanvas={EditCanvasComp}
+          // The number, not the name: `aspectRatioFor` is the one place the
+          // mapping lives, and `layoutBoard` reads it from there too, so the
+          // sheet and the board cannot drift into disagreeing about what
+          // "portrait" means.
+          tileAspect={aspectRatioFor(session.doc.display.tileAspect)}
           assetUrl={assetUrl}
           onAction={dispatch}
           onClose={() => setEditing(null)}

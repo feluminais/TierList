@@ -18,6 +18,7 @@ import {
   Rect,
   Text,
   rect,
+  type CanvasRef,
   type SkImage,
 } from "@shopify/react-native-skia";
 import React, { useMemo } from "react";
@@ -58,6 +59,14 @@ export interface TierBoardProps {
    * a consumer that has not wired uploads yet should see.
    */
   images?: ImageCache;
+  /**
+   * A handle on the underlying Skia canvas, for `encodeBoardImage`.
+   *
+   * Passed down rather than exposed through an imperative handle on this
+   * component: what an export needs is the canvas itself, and adding a layer
+   * that forwards one method would only be somewhere for the two to drift.
+   */
+  canvasRef?: React.Ref<CanvasRef>;
 }
 
 /**
@@ -70,7 +79,7 @@ export interface TierBoardProps {
  * where the caret and the floating tile go is `@tl/editor-core`'s arithmetic,
  * not this file's. `InteractiveBoard` is what turns touches into that state.
  */
-export function TierBoard({ doc, width, layout, drag, images }: TierBoardProps) {
+export function TierBoard({ doc, width, layout, drag, images, canvasRef }: TierBoardProps) {
   const board = useMemo(
     () => layout ?? layoutBoard(doc, { width }),
     [layout, doc, width],
@@ -212,7 +221,7 @@ export function TierBoard({ doc, width, layout, drag, images }: TierBoardProps) 
   };
 
   return (
-    <Canvas style={{ width, height: board.contentHeight }}>
+    <Canvas ref={canvasRef} style={{ width, height: board.contentHeight }}>
       <Fill color={BOARD_BACKGROUND} />
 
       {board.rows.map((row) => {

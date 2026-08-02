@@ -17,6 +17,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ComponentType,
 } from "react";
@@ -38,9 +39,31 @@ type BoardProps = {
   assetUrl?: (assetId: string) => string;
 };
 
-/** Width the board is laid out against. Also the width of the surface below
- *  that claims touch input, so the two cannot drift apart. */
-const BOARD_WIDTH = 800;
+/**
+ * The board fills the width it is given, within limits, and is centred in it.
+ *
+ * This is also the width of the surface below that claims touch input, so the
+ * two cannot drift apart.
+ *
+ * It was fixed at 800px, which was wrong at both ends: it wasted most of a
+ * desktop window while leaving a phone cramped at roughly two tiles per line.
+ * The floor stops a narrow screen collapsing the tiles area to nothing; the
+ * ceiling stops a tier row becoming an unscannable ribbon on an ultrawide,
+ * where the eye has to travel the whole screen to compare two tiles.
+ *
+ * The width is measured, not guessed from a breakpoint, because `layoutBoard`
+ * takes a number and everything downstream — hit-testing, drag targeting, the
+ * hover overlay — must be given the *same* number the canvas was drawn with.
+ */
+const MIN_BOARD_WIDTH = 320;
+const MAX_BOARD_WIDTH = 1400;
+
+/**
+ * What the board is laid out at before it has been measured. Only ever visible
+ * for the first paint, and the canvas itself does not mount until CanvasKit has
+ * loaded, so this is never seen as a reflow.
+ */
+const DEFAULT_BOARD_WIDTH = 800;
 
 /** Where this browser's list id is remembered between visits. */
 const LIST_ID_KEY = "tl.listId";
@@ -290,8 +313,28 @@ export default function SkiaHost() {
 
   useAutosave(session, loaded ? client : null, handlers);
 
+  // Measured rather than read from a media query: `layoutBoard` takes a number,
+  // and the canvas, the hit-testing and the hover overlay must all be handed
+  // the same one or a drop lands somewhere the user did not aim.
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const [boardWidth, setBoardWidth] = useState(DEFAULT_BOARD_WIDTH);
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    const measure = () => {
+      setBoardWidth(
+        Math.max(MIN_BOARD_WIDTH, Math.min(MAX_BOARD_WIDTH, shell.clientWidth)),
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(shell);
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <div style={{ width: BOARD_WIDTH, maxWidth: "100%" }}>
+    <div ref={shellRef} style={{ width: "100%" }}>
+    <div style={{ width: boardWidth, maxWidth: "100%", margin: "0 auto" }}>
       <Toolbar
         session={session}
         connection={connection}
@@ -334,11 +377,11 @@ export default function SkiaHost() {
         // has no hover to track and no need for the extra wrapper, so the
         // touch path stays exactly what it was.
         pointerFine ? (
-          <TileEditOverlay doc={session.doc} width={BOARD_WIDTH} dragging={dragging} onEdit={onTap}>
-            <div style={{ touchAction: "none", width: BOARD_WIDTH }}>
+          <TileEditOverlay doc={session.doc} width={boardWidth} dragging={dragging} onEdit={onTap}>
+            <div style={{ touchAction: "none", width: boardWidth }}>
               <Board
                 doc={session.doc}
-                width={BOARD_WIDTH}
+                width={boardWidth}
                 onAction={dispatch}
                 onDraggingChange={setDragging}
                 immediateDrag
@@ -348,10 +391,10 @@ export default function SkiaHost() {
             </div>
           </TileEditOverlay>
         ) : (
-          <div style={{ touchAction: "none", width: BOARD_WIDTH }}>
+          <div style={{ touchAction: "none", width: boardWidth }}>
             <Board
               doc={session.doc}
-              width={BOARD_WIDTH}
+              width={boardWidth}
               onAction={dispatch}
               onTap={onTap}
               assetIds={assetIds}
@@ -369,6 +412,7 @@ export default function SkiaHost() {
           onClose={() => setEditing(null)}
         />
       ) : null}
+      </div>
     </div>
   );
 }

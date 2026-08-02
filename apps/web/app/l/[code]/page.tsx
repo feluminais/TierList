@@ -1,6 +1,7 @@
 import { createClient, type SharedList } from "@tl/api-client";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { FillButton } from "./FillButton";
 import { StaticBoard } from "./StaticBoard";
 
 /**
@@ -87,6 +88,11 @@ export default async function SharedListPage({ params }: PageProps) {
 
   const client = serverClient();
   const doc = share.document;
+  // Passed down rather than read in the button: `process.env` reads are
+  // inlined at build time only when written out in full, and a client
+  // component reading `process.env.NEXT_PUBLIC_API_URL` itself would be a
+  // second place for that to be got wrong.
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? null;
 
   return (
     <main
@@ -107,6 +113,12 @@ export default async function SharedListPage({ params }: PageProps) {
           {plural(doc.rows.length, "tier")}
         </p>
       )}
+
+      {apiBaseUrl ? (
+        <div style={{ margin: "0 0 20px" }}>
+          <FillButton source={doc} baseUrl={apiBaseUrl} />
+        </div>
+      ) : null}
 
       <StaticBoard
         doc={doc}

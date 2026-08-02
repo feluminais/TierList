@@ -11,12 +11,18 @@ export default function Home() {
         </p>
       </div>
 
-      <div>
+      <div className="flex flex-wrap gap-3">
         <Link
           href="/editor"
           className="inline-flex h-12 items-center rounded-full bg-zinc-900 px-6 font-medium text-zinc-50 transition-colors hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
         >
           Open the editor
+        </Link>
+        <Link
+          href="/lists"
+          className="inline-flex h-12 items-center rounded-full border border-zinc-300 px-6 font-medium transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+        >
+          My lists
         </Link>
       </div>
 
@@ -24,11 +30,11 @@ export default function Home() {
         <li>Tiles at any size, for the whole list or one tier.</li>
         <li>Crop and annotate an image without leaving the board.</li>
         <li>Export as PNG, JPG, or the document itself as JSON.</li>
+        <li>Publish a template and let someone else fill in their own copy.</li>
       </ul>
 
       <p className="text-sm text-zinc-500">
-        The editor keeps one list per browser. Saving needs an API; without one, changes stay
-        on the page.
+        Saving needs an API; without one, changes stay on the page.
       </p>
     </main>
   );

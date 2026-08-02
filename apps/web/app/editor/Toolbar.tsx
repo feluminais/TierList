@@ -2,6 +2,7 @@
 
 import type { TileAspect } from "@tl/core";
 import type { EditorSession } from "@tl/editor-core";
+import Link from "next/link";
 import { useState, type CSSProperties, type FormEvent } from "react";
 import type { Connection } from "./useApiClient";
 
@@ -39,10 +40,8 @@ export interface ToolbarProps {
   /** Export handlers. Null while the canvas has not loaded and cannot snapshot. */
   onExportImage: ((format: "png" | "jpg") => void) | null;
   onExportJson: () => void;
+  /** Opens the share dialog. Null while there is no API to share against. */
   onShare: (() => void) | null;
-  sharing: boolean;
-  shareUrl: string | null;
-  shareError: string | null;
 }
 
 /**
@@ -68,9 +67,6 @@ export function Toolbar({
   onExportImage,
   onExportJson,
   onShare,
-  sharing,
-  shareUrl,
-  shareError,
 }: ToolbarProps) {
   const [draft, setDraft] = useState("");
 
@@ -86,6 +82,15 @@ export function Toolbar({
 
   return (
     <div style={bar}>
+      <Link
+        href="/lists"
+        data-testid="my-lists"
+        title="Every list this browser owns"
+        style={{ ...button(false), textDecoration: "none", display: "inline-block" }}
+      >
+        My lists
+      </Link>
+
       <input
         aria-label="List title"
         data-testid="title-input"
@@ -210,29 +215,12 @@ export function Toolbar({
         type="button"
         data-testid="share"
         onClick={() => onShare?.()}
-        disabled={!onShare || sharing}
-        style={button(!onShare || sharing)}
-        title="Create a public link"
+        disabled={!onShare}
+        style={button(!onShare)}
+        title="Share a link, or publish a template others can fill"
       >
-        {sharing ? "Sharing…" : "Share"}
+        Share
       </button>
-
-      {shareUrl ? (
-        <input
-          aria-label="Share link"
-          data-testid="share-url"
-          readOnly
-          value={shareUrl}
-          onFocus={(event) => event.target.select()}
-          style={{ ...field, width: 260, fontSize: 12 }}
-        />
-      ) : null}
-
-      {shareError ? (
-        <span data-testid="share-error" role="alert" style={{ ...readout, ...warned }}>
-          {shareError}
-        </span>
-      ) : null}
 
       {uploadError ? (
         <span data-testid="upload-error" role="alert" style={{ ...readout, ...warned }}>

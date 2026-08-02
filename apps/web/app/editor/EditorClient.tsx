@@ -16,6 +16,10 @@ const SkiaHost = dynamic(() => import("./SkiaHost"), {
   loading: () => <p style={{ color: "#888", padding: 16 }}>Loading canvas…</p>,
 });
 
-export default function EditorClient() {
-  return <SkiaHost />;
+export default function EditorClient({ listId }: { listId: string }) {
+  // Keyed on the list so switching to another one remounts rather than reusing
+  // the editor's state. The session, its history and its save status all belong
+  // to one document; carrying them across would offer an undo that restores a
+  // different list's content.
+  return <SkiaHost key={listId} listId={listId} />;
 }

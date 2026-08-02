@@ -7,6 +7,51 @@ export interface DeriveParams {
 }
 
 /**
+ * Whether this document was started from another one.
+ *
+ * `templateId` is written only by `startFill` and no action can change it, so
+ * its presence is the whole answer. A document that merely *looks* like a
+ * template — everything in the tray — is not a fill; it is a list nobody has
+ * started yet.
+ */
+export function isFill(doc: TierList): boolean {
+  return doc.templateId !== undefined;
+}
+
+export interface FillProgress {
+  /** Items sitting in a tier. */
+  placed: number;
+  /** Items in the document, wherever they sit. */
+  total: number;
+  /** `placed / total`, and 1 when there is nothing to place. */
+  fraction: number;
+}
+
+/**
+ * How far through a fill the user is.
+ *
+ * Counted from `items` rather than from `placements`, and by looking each
+ * item's placement up: an item with no placement at all is unplaced, not
+ * absent. Nothing in the reducer produces that, but `migrate()` performs no
+ * structural validation, so a stored document can arrive holding one — and
+ * counting placements instead would quietly report a total the board does not
+ * show.
+ *
+ * A list with no items is complete rather than 0/0 of nothing: the readout
+ * exists to say "anything left?", and dividing by zero to answer it would put
+ * `NaN%` on the screen.
+ */
+export function fillProgress(doc: TierList): FillProgress {
+  const location = new Map(doc.placements.map((p) => [p.itemId, p.rowId]));
+  let placed = 0;
+  for (const item of doc.items) {
+    if ((location.get(item.id) ?? null) !== null) placed += 1;
+  }
+  const total = doc.items.length;
+  return { placed, total, fraction: total === 0 ? 1 : placed / total };
+}
+
+/**
  * Put every item in the tray, numbered `0..n-1` by the item's own `order`.
  *
  * The source document's placements cannot supply that order, even though some

@@ -4,6 +4,8 @@ import type { AssetResponse } from "@tl/api-client";
 import {
   createTierList,
   defaultImageEdit,
+  fillProgress,
+  isFill,
   type TierList,
   type TierListAction,
   type TileAspect,
@@ -28,7 +30,9 @@ import {
   type ComponentType,
 } from "react";
 import { downloadBytes, filenameFor } from "./download";
+import { newId } from "./ids";
 import { EditSheet, type EditCanvasComponent } from "./EditSheet";
+import { ShareDialog } from "./ShareDialog";
 import { TierOverlay } from "./TierOverlay";
 import { TileEditOverlay } from "./TileEditButton";
 import { Toolbar } from "./Toolbar";
@@ -85,8 +89,14 @@ const MAX_BOARD_WIDTH = 1400;
  */
 const DEFAULT_BOARD_WIDTH = 800;
 
-/** Where this browser's list id is remembered between visits. */
-const LIST_ID_KEY = "tl.listId";
+/**
+ * The list this browser was last editing.
+ *
+ * Not the authority on which list is open — the route is — but what `/editor`
+ * with no id resolves to, so returning to a bare link lands where the user
+ * left off rather than on a new empty board.
+ */
+export const LIST_ID_KEY = "tl.listId";
 
 /**
  * Nothing Skia-related may be imported at module scope in this file.
@@ -101,7 +111,12 @@ const LIST_ID_KEY = "tl.listId";
  * explicit rather than relying on bundler chunking, which differs between dev
  * and production builds.
  */
-export default function SkiaHost() {
+export interface SkiaHostProps {
+  /** The list this editor edits. Comes from the route, never from storage. */
+  listId: string;
+}
+
+export default function SkiaHost({ listId }: SkiaHostProps) {
   const [Board, setBoard] = useState<ComponentType<BoardProps> | null>(null);
   const [EditCanvasComp, setEditCanvasComp] = useState<EditCanvasComponent | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -131,19 +146,13 @@ export default function SkiaHost() {
     };
   }, []);
 
-  // The list this page edits, remembered so a reload returns to the same
-  // document. Chosen in an effect rather than during render because
-  // `localStorage` does not exist on the server, and a value read during
-  // render would differ between the server and the first client render.
-  const [listId, setListId] = useState<string | null>(null);
+  // Remembered so `/editor` with no id returns here. Written rather than read:
+  // the route already decided which list this is, and storage is only a
+  // convenience for getting back to it. In an effect because `localStorage`
+  // does not exist on the server.
   useEffect(() => {
-    let id = window.localStorage.getItem(LIST_ID_KEY);
-    if (!id) {
-      id = newId();
-      window.localStorage.setItem(LIST_ID_KEY, id);
-    }
-    setListId(id);
-  }, []);
+    window.localStorage.setItem(LIST_ID_KEY, listId);
+  }, [listId]);
 
   // Whether this device has a mouse (or other precise pointer) rather than
   // only touch. Read in an effect, not during render, for the same reason
@@ -171,18 +180,22 @@ export default function SkiaHost() {
 
   // The document, its history and its saved state, together. `null` for the
   // synced revision says the server has never seen this document, so the first
-  // write will be a create. This placeholder is replaced the moment `listId`
-  // (and, if there is a client, a load) resolves — see the effect below — so
-  // it is never what a save actually goes out against.
-  const [session, setSession] = useState(() => createSession(emptyDoc("preview"), null));
-  // Whether `session` is actually the list this route means to edit, rather
-  // than the "preview" placeholder above. Gates autosave below: without it, a
-  // slow `getList` round trip leaves the placeholder's `syncedRevision: null`
-  // in place for up to a whole debounce window, which is enough on a slow
-  // connection for autosave to issue a real `createList` for a document
-  // nobody asked to save, under an id ("preview") a real list will never
-  // reuse.
+  // write will be a create. Starts as an empty document under the real id,
+  // replaced once the load below resolves.
+  const [session, setSession] = useState(() => createSession(emptyDoc(listId), null));
+  // Whether `session` is the loaded document rather than the empty placeholder
+  // above. Gates autosave: without it, a slow `getList` round trip leaves the
+  // placeholder's `syncedRevision: null` in place for a whole debounce window,
+  // which is long enough for autosave to `createList` an empty document over
+  // the top of one the server already holds.
   const [loaded, setLoaded] = useState(false);
+  // Reset when the route changes to another list, so the previous document is
+  // never shown as though it were this one — and, more importantly, never
+  // saved under this id.
+  useEffect(() => {
+    setSession(createSession(emptyDoc(listId), null));
+    setLoaded(false);
+  }, [listId]);
 
   // `process.env.NEXT_PUBLIC_API_URL` is written out in full so the bundler can
   // inline it; a destructured or computed read is not substituted.
@@ -190,7 +203,6 @@ export default function SkiaHost() {
   const client = connection.state === "connected" ? connection.client : null;
 
   useEffect(() => {
-    if (!listId) return;
     if (!client) {
       // No API configured is the normal state of this route. Start a local
       // document under the real id so nothing downstream has to special-case it.
@@ -352,7 +364,15 @@ export default function SkiaHost() {
     (code: string) => `${window.location.origin}/l/${code}`,
     [],
   );
-  const sharing = useShare(client, listId, ogImage, shareUrlFor);
+  const sharing = useShare(client, listId, session.doc, ogImage, shareUrlFor);
+  const [shareOpen, setShareOpen] = useState(false);
+  const openShare = useCallback(() => setShareOpen(true), []);
+
+  // How much of a fill is done. Computed for every document — the readout is
+  // only shown for a fill, but `fillProgress` is cheap and branching on the
+  // document here would put the "is this a fill" question in two places.
+  const progress = useMemo(() => fillProgress(session.doc), [session.doc]);
+  const filling = isFill(session.doc);
 
   // Which tile a sheet is open for, if any.
   //
@@ -427,11 +447,23 @@ export default function SkiaHost() {
         onTileAspect={onTileAspect}
         onExportImage={exporter ? onExportImage : null}
         onExportJson={onExportJson}
-        onShare={client && listId ? sharing.share : null}
-        sharing={sharing.sharing}
-        shareUrl={sharing.url}
-        shareError={sharing.error}
+        onShare={client ? openShare : null}
       />
+
+      {filling ? <FillBanner placed={progress.placed} total={progress.total} /> : null}
+
+      {shareOpen ? (
+        <ShareDialog
+          onShareView={() => void sharing.share()}
+          viewUrl={sharing.url}
+          onShareTemplate={() => void sharing.shareTemplate()}
+          templateUrl={sharing.templateUrl}
+          busy={sharing.sharing}
+          error={sharing.error}
+          onClose={() => setShareOpen(false)}
+        />
+      ) : null}
+
       {error ? (
         <pre style={{ color: "#f88", padding: 16 }}>{error}</pre>
       ) : !Board ? (
@@ -526,24 +558,6 @@ function now(): string {
 }
 
 /**
- * A fresh item id.
- *
- * `crypto.randomUUID` is the right source — a module-scope counter would
- * collide between two tabs editing the same list — but it exists only in
- * *secure contexts*, so it is absent over plain http to a LAN address, which is
- * exactly how a phone reaches a dev server. The fallback is not
- * cryptographically anything; it only has to not collide.
- *
- * Called from an event handler, never during render, so it cannot run on the
- * server.
- */
-function newId(): string {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  return `item-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-/**
  * The document a list starts from: the default tiers and an empty tray.
  *
  * Empty rather than seeded with example items. This is not a preview — with an
@@ -556,4 +570,64 @@ function newId(): string {
  */
 function emptyDoc(id: string): TierList {
   return createTierList({ id, now: "2026-08-01T12:00:00.000Z" });
+}
+
+/**
+ * The readout that says this list is somebody else's template being filled in.
+ *
+ * Worth stating plainly: a fill looks exactly like an ordinary list, and
+ * without this the only clue that these items came from someone else is that
+ * the user did not add them. The count is the useful half — "anything left?" is
+ * the question a filler actually has.
+ */
+function FillBanner({ placed, total }: { placed: number; total: number }) {
+  const done = total > 0 && placed === total;
+  return (
+    <div data-testid="fill-banner" style={fillBanner(done)}>
+      <strong>{done ? "All ranked" : "Filling in a template"}</strong>
+      <span data-testid="fill-progress" style={{ color: "#8b98a6" }}>
+        {placed} of {total} placed
+      </span>
+      <div
+        aria-hidden="true"
+        style={{
+          flex: 1,
+          height: 4,
+          minWidth: 60,
+          borderRadius: 4,
+          background: "#232a33",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: `${total === 0 ? 100 : Math.round((placed / total) * 100)}%`,
+            height: "100%",
+            background: done ? "#4ade80" : "#3b8beb",
+          }}
+        />
+      </div>
+      {done ? (
+        <span style={{ color: "#4ade80" }}>Share it back with whoever sent it</span>
+      ) : (
+        <span style={{ color: "#5b6673" }}>Drag tiles from the tray into a tier</span>
+      )}
+    </div>
+  );
+}
+
+function fillBanner(done: boolean): React.CSSProperties {
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "8px 12px",
+    marginBottom: 12,
+    background: "#12161b",
+    border: `1px solid ${done ? "#2f5d3f" : "#2c3540"}`,
+    borderRadius: 8,
+    color: "#e6edf3",
+    fontFamily: "system-ui, sans-serif",
+    fontSize: 13,
+  };
 }

@@ -1,13 +1,20 @@
 "use client";
 
 import type { Client } from "@tl/api-client";
+import { toTemplate, type TierList } from "@tl/core";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { newListId } from "./ids";
 
 export interface ShareState {
+  /** Creates (or re-fetches) the read-only link to this list. */
   share: () => Promise<void>;
+  /** Publishes a snapshot of this list as a template others can fill. */
+  shareTemplate: () => Promise<void>;
   sharing: boolean;
-  /** The public link, once one exists. */
+  /** The read-only link, once one exists. */
   url: string | null;
+  /** The template link, once one has been published. */
+  templateUrl: string | null;
   error: string | null;
 }
 
@@ -34,16 +41,28 @@ export type OgImageSource = () => { bytes: Uint8Array; contentType: string } | n
 export function useShare(
   client: Client | null,
   listId: string | null,
+  doc: TierList,
   ogImage: OgImageSource,
   shareUrlFor: (code: string) => string,
 ): ShareState {
   const [sharing, setSharing] = useState(false);
   const [url, setUrl] = useState<string | null>(null);
+  const [templateUrl, setTemplateUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Read through a ref so publishing a template does not have to re-key on
+  // every edit: the callback wants whatever the document is *when it runs*,
+  // and a dependency on `doc` would rebuild it on every keystroke.
+  const docRef = useRef(doc);
+  docRef.current = doc;
 
   // A mount flag owned by its own empty-dependency effect, exactly as
   // `useAutosave` and `useAssetUpload` use one, and for the same reason: this
   // resolves after two network round trips and must not call into a dead tree.
+  // The template this session published, so a second press re-shares it rather
+  // than creating a second one.
+  const templateIdRef = useRef<string | null>(null);
+
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -82,5 +101,45 @@ export function useShare(
     }
   }, [client, listId, ogImage, shareUrlFor]);
 
-  return { share, sharing, url, error };
+  /**
+   * Publish the list as a template and share *that*.
+   *
+   * A separate document, not a flag on this one. `toTemplate` snapshots the
+   * rows and items as they stand and puts every item in the tray, so a fill
+   * started from it is stable: editing this list afterwards cannot make items
+   * appear or vanish under someone who is halfway through ranking them. It
+   * also means the author keeps their own arrangement — publishing does not
+   * empty the board they were looking at.
+   *
+   * Idempotent in the way that matters: a second press re-shares the template
+   * already created rather than publishing another, because the id is minted
+   * once and kept.
+   */
+  const shareTemplate = useCallback(async () => {
+    if (!client) {
+      setError("not connected to an API");
+      return;
+    }
+
+    setError(null);
+    setSharing(true);
+    try {
+      let id = templateIdRef.current;
+      if (!id) {
+        id = newListId();
+        await client.createList(
+          toTemplate(docRef.current, { id, now: new Date().toISOString() }),
+        );
+        templateIdRef.current = id;
+      }
+      const result = await client.shareList(id);
+      if (mounted.current) setTemplateUrl(shareUrlFor(result.code));
+    } catch (e) {
+      if (mounted.current) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (mounted.current) setSharing(false);
+    }
+  }, [client, shareUrlFor]);
+
+  return { share, shareTemplate, sharing, url, templateUrl, error };
 }

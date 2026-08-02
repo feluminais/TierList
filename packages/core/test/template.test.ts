@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createTierList } from "../src/factory";
 import { reduce } from "../src/reduce";
-import { startFill, toTemplate } from "../src/template";
+import { fillProgress, isFill, startFill, toTemplate } from "../src/template";
 import type { TierList } from "../src/types";
 
 const NOW = "2026-07-31T12:00:00.000Z";
@@ -104,5 +104,81 @@ describe("startFill", () => {
     const a = startFill(t, { id: "fill-a", now: LATER });
     const b = startFill(t, { id: "fill-b", now: LATER });
     expect(a.rows.map((r) => r.id)).toEqual(b.rows.map((r) => r.id));
+  });
+});
+
+describe("isFill", () => {
+  it("is false for an ordinary list and for a template", () => {
+    const doc = filledList();
+    expect(isFill(doc)).toBe(false);
+    expect(isFill(toTemplate(doc, { id: "t1", now: NOW }))).toBe(false);
+  });
+
+  it("is true for a document started from another", () => {
+    const template = toTemplate(filledList(), { id: "t1", now: NOW });
+    expect(isFill(startFill(template, { id: "f1", now: NOW }))).toBe(true);
+  });
+});
+
+describe("fillProgress", () => {
+  it("counts nothing placed in a fresh fill", () => {
+    const template = toTemplate(filledList(), { id: "t1", now: NOW });
+    const fill = startFill(template, { id: "f1", now: NOW });
+    const progress = fillProgress(fill);
+    expect(progress.placed).toBe(0);
+    expect(progress.total).toBe(fill.items.length);
+    expect(progress.total).toBeGreaterThan(0);
+    expect(progress.fraction).toBe(0);
+  });
+
+  it("counts an item once it is in a tier", () => {
+    const template = toTemplate(filledList(), { id: "t1", now: NOW });
+    let fill = startFill(template, { id: "f1", now: NOW });
+    const rowId = fill.rows[0]!.id;
+    fill = reduce(fill, { type: "placement/place", itemId: fill.items[0]!.id, rowId, index: 0 }, NOW);
+
+    expect(fillProgress(fill).placed).toBe(1);
+  });
+
+  it("stops counting an item returned to the tray", () => {
+    const template = toTemplate(filledList(), { id: "t1", now: NOW });
+    let fill = startFill(template, { id: "f1", now: NOW });
+    const itemId = fill.items[0]!.id;
+    fill = reduce(fill, { type: "placement/place", itemId, rowId: fill.rows[0]!.id, index: 0 }, NOW);
+    fill = reduce(fill, { type: "placement/unplace", itemId }, NOW);
+
+    expect(fillProgress(fill).placed).toBe(0);
+  });
+
+  it("reads a fully placed fill as complete", () => {
+    const template = toTemplate(filledList(), { id: "t1", now: NOW });
+    let fill = startFill(template, { id: "f1", now: NOW });
+    const rowId = fill.rows[0]!.id;
+    for (const [index, item] of fill.items.entries()) {
+      fill = reduce(fill, { type: "placement/place", itemId: item.id, rowId, index }, NOW);
+    }
+    const progress = fillProgress(fill);
+    expect(progress.placed).toBe(progress.total);
+    expect(progress.fraction).toBe(1);
+  });
+
+  /**
+   * `migrate()` performs no structural validation, so a stored document can
+   * carry an item with no placement at all. Counting placements rather than
+   * items would report a total the board does not show.
+   */
+  it("treats an item with no placement as unplaced, not as absent", () => {
+    const template = toTemplate(filledList(), { id: "t1", now: NOW });
+    const fill = startFill(template, { id: "f1", now: NOW });
+    const orphaned = { ...fill, placements: fill.placements.slice(1) };
+
+    const progress = fillProgress(orphaned);
+    expect(progress.total).toBe(fill.items.length);
+    expect(progress.placed).toBe(0);
+  });
+
+  it("calls an empty list complete rather than dividing by zero", () => {
+    const empty = { ...filledList(), items: [], placements: [] };
+    expect(fillProgress(empty)).toEqual({ placed: 0, total: 0, fraction: 1 });
   });
 });

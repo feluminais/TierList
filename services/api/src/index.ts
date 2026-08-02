@@ -13,9 +13,9 @@ if (!url) {
 
 const port = Number(process.env.PORT ?? 8787);
 const { db } = createDb(url);
-// A local directory today; swaps for an S3/R2-backed ObjectStore in 1E without
-// touching anything above this line, since routes are typed against the
-// interface and never the adapter.
+// A local directory. Swapping in an S3-compatible ObjectStore touches nothing
+// above this line, because routes are typed against the interface rather than
+// against an adapter.
 const storageRoot = process.env.ASSET_STORAGE_ROOT ?? path.resolve(process.cwd(), "data/assets");
 const app = buildApp({ repository: createRepository(db), store: createFileStore(storageRoot) });
 

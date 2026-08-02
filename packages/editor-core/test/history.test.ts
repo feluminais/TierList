@@ -1,4 +1,4 @@
-import { createTierList, reduce, type TierList } from "@tl/core";
+import { createTierList, reduce, SCHEMA_VERSION, type TierList } from "@tl/core";
 import { describe, expect, it } from "vitest";
 import {
   canRedo,
@@ -543,7 +543,8 @@ describe("revision discipline over long random sessions", () => {
 
         expect(doc.id).toBe("list-1");
         expect(doc.createdAt).toBe(T0);
-        expect(doc.schemaVersion).toBe(2);
+        // No action writes this field, whatever the current version is.
+        expect(doc.schemaVersion).toBe(SCHEMA_VERSION);
 
         expect(history.past.length).toBeLessThanOrEqual(limit);
         expect(history.future.length).toBeLessThanOrEqual(limit);

@@ -210,6 +210,49 @@ describe("POST /lists/:id/share", () => {
     expect(res.status).toBe(201);
     expect(((await res.json()) as { ogAssetId: string | null }).ogAssetId).toBeNull();
   });
+
+  // An accepted id becomes the link preview's image URL, so one that names
+  // nothing would publish a card pointing at a 404.
+  it("refuses an ogAssetId that names no asset", async () => {
+    const token = await mint();
+    await createList(token);
+    const res = await share(token, "list-1", { ogAssetId: "00000000-0000-4000-8000-000000000000" });
+    expect(res.status).toBe(400);
+  });
+
+  it("creates no share at all when the ogAssetId is refused", async () => {
+    const token = await mint();
+    await createList(token);
+    await share(token, "list-1", { ogAssetId: "00000000-0000-4000-8000-000000000000" });
+
+    const retried = await share(token, "list-1");
+    expect(retried.status).toBe(201);
+  });
+
+  it("refuses an unknown ogAssetId on a list that already has a code", async () => {
+    const token = await mint();
+    await createList(token);
+    const first = await share(token, "list-1");
+    const { code } = (await first.json()) as { code: string };
+
+    const res = await share(token, "list-1", {
+      ogAssetId: "00000000-0000-4000-8000-000000000000",
+    });
+    expect(res.status).toBe(400);
+
+    // The existing code keeps whatever preview it had.
+    const read = await app.request(`/shares/${code}`);
+    expect(((await read.json()) as { ogAssetId: string | null }).ogAssetId).toBeNull();
+  });
+
+  it("answers not-found before it looks at the ogAssetId", async () => {
+    const owner = await mint();
+    const stranger = await mint();
+    await createList(owner);
+
+    const res = await share(stranger, "list-1", { ogAssetId: "anything" });
+    expect(res.status).toBe(404);
+  });
 });
 
 describe("GET /shares/:code", () => {

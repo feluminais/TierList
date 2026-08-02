@@ -61,11 +61,11 @@ function apply(doc: TierList, action: TierListAction): TierList {
     case "row/remove": {
       if (!doc.rows.some((r) => r.id === action.rowId)) return doc;
       const kept = doc.placements.filter((p) => p.rowId !== action.rowId);
-      // The row's items go to the end of the tray in the order they held, the
-      // same destination `placement/unplace` uses, and numbered from the tray's
-      // current length so its indices stay contiguous. Not `closeGap`: that
-      // closes a single hole where it finds it, whereas removing a row empties
-      // one location outright and renumbers its items into a different one.
+      // The row's items go to the end of the tray in the order they held —
+      // the destination `placement/unplace` uses — numbered from the tray's
+      // current length so its indices stay contiguous. Not `closeGap`, which
+      // closes a single hole in place: removing a row empties one location
+      // outright and renumbers its items into a different one.
       const trayBase = trayCount(kept);
       const returned = doc.placements
         .filter((p) => p.rowId === action.rowId)
@@ -82,11 +82,10 @@ function apply(doc: TierList, action: TierListAction): TierList {
       const row = doc.rows.find((r) => r.id === action.rowId);
       if (!row) return doc;
       // Setting the size a row already has — which a slider does on every
-      // frame it is dragged without crossing a step boundary — is a genuine
-      // no-op, so the same reference goes back and `reduce()` skips the
-      // revision bump and the autosave it would otherwise trigger.
-      // `?? null` on the left because an absent override and an explicit null
-      // are the same state and must compare equal.
+      // frame it is dragged without crossing a step boundary — is a no-op, so
+      // the same reference goes back and `reduce()` skips the revision bump
+      // and the save it would trigger. `?? null` on the left because an absent
+      // override and an explicit null are the same state.
       if ((row.tileSizeOverride ?? null) === action.tileSize) return doc;
 
       return {
@@ -94,11 +93,11 @@ function apply(doc: TierList, action: TierListAction): TierList {
         rows: doc.rows.map((r) => {
           if (r.id !== action.rowId) return r;
           if (action.tileSize === null) {
-            // The key is deleted rather than set to undefined: the document is
-            // serialised to JSON and stored, and `{tileSizeOverride: undefined}`
-            // and `{}` round-trip to the same thing — so leaving the key in
-            // place would make a cleared row compare unequal to a row that
-            // never had an override, in memory but not after a reload.
+            // The key is deleted rather than set to undefined. The document is
+            // stored as JSON, where `{tileSizeOverride: undefined}` and `{}`
+            // round-trip to the same thing, so leaving the key in place makes
+            // a cleared row compare unequal to a row that never had an
+            // override — in memory, but not after a reload.
             const { tileSizeOverride: _cleared, ...rest } = r;
             return rest;
           }
@@ -167,9 +166,8 @@ function apply(doc: TierList, action: TierListAction): TierList {
         items: doc.items
           .filter((i) => i.id !== action.itemId)
           .map((i, idx) => ({ ...i, order: idx })),
-        // `vacated` is undefined only for a document that reached us with an
-        // item but no placement — migrate() does not rule that out — in which
-        // case there is no hole to close.
+        // `vacated` is undefined only for an item with no placement, which a
+        // valid document does not contain — there is then no hole to close.
         placements: vacated ? closeGap(remaining, vacated) : remaining,
       };
     }
@@ -190,8 +188,8 @@ function apply(doc: TierList, action: TierListAction): TierList {
 
       // Close the gap the item leaves behind, so indices stay contiguous
       // within every location. Skipped when the item is not changing location,
-      // purely to save the work: there, every index `closeGap` would touch is
-      // in the target set, which the renumber below overwrites wholesale.
+      // to save the work: every index `closeGap` would touch is then in the
+      // target set, which the renumber below overwrites wholesale.
       const remaining =
         current && current.rowId !== action.rowId
           ? closeGap(others, current)
@@ -202,9 +200,9 @@ function apply(doc: TierList, action: TierListAction): TierList {
         .sort((a, b) => a.index - b.index);
       const target = clamp(action.index, 0, inTarget.length);
 
-      // Already exactly there: a genuine no-op, so return the same reference
-      // and let reduce() skip the revision bump. Compared after clamping,
-      // because an out-of-range index names the same slot as the last one.
+      // Already exactly there: a no-op, so return the same reference and let
+      // reduce() skip the revision bump. Compared after clamping, because an
+      // out-of-range index names the same slot as the last one.
       const alreadyThere =
         current !== undefined &&
         current.rowId === action.rowId &&
@@ -224,8 +222,7 @@ function apply(doc: TierList, action: TierListAction): TierList {
     case "placement/unplace": {
       const current = doc.placements.find((p) => p.itemId === action.itemId);
       if (!current) return doc;
-      // Already in the tray: a genuine no-op, so the reducer returns the same
-      // reference and reduce() skips the revision bump.
+      // Already in the tray: a no-op, so the same reference goes back.
       if (current.rowId === null) return doc;
 
       const others = doc.placements.filter((p) => p.itemId !== action.itemId);
@@ -244,6 +241,28 @@ function apply(doc: TierList, action: TierListAction): TierList {
 
     case "display/set":
       return { ...doc, display: { ...doc.display, ...action.patch } };
+
+    case "display/setUniformTileSize": {
+      const hasOverride = doc.rows.some((r) => r.tileSizeOverride !== undefined);
+      // Nothing to do: the size already holds and no row departs from it. A
+      // slider dragged within one step lands here on most frames, and
+      // returning the same reference is what stops each one becoming a
+      // revision, an autosave and an undo step.
+      if (doc.display.tileSize === action.tileSize && !hasOverride) return doc;
+
+      return {
+        ...doc,
+        display: { ...doc.display, tileSize: action.tileSize },
+        rows: doc.rows.map((row) => {
+          if (row.tileSizeOverride === undefined) return row;
+          // Deleted rather than set to undefined, for the reason
+          // `row/setTileSize` documents: the document is stored as JSON, where
+          // an undefined-valued key and an absent one are the same thing.
+          const { tileSizeOverride: _cleared, ...rest } = row;
+          return rest;
+        }),
+      };
+    }
 
     case "meta/set":
       return { ...doc, ...action.patch };

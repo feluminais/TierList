@@ -16,13 +16,10 @@ type Crop = ImageEdit["crop"];
  * an error; clamping would bunch points against the edge and turn a stroke
  * running off the picture into a smear along its border.
  *
- * A zero-width or zero-height tile divides by zero here — `NaN` when the
- * point sits exactly on the degenerate axis, `Infinity` otherwise — and a
- * `NaN` written into a stroke's points is silent corruption that survives
- * `simplifyPoints` and lands in the document. `layoutBoard` cannot produce
- * such a tile, but nothing stops a caller from passing one, so this fails
- * loudly instead, the same way `defaultCropFor` refuses a degenerate source
- * and `imagePlacement` refuses a rotation it cannot honour.
+ * A zero-width or zero-height tile divides by zero here, and a `NaN` written
+ * into a stroke's points is silent corruption that survives `simplifyPoints`
+ * and lands in the document. `layoutBoard` cannot produce such a tile, but
+ * nothing stops a caller passing one, so this fails loudly instead.
  */
 export function toSourcePoint(point: Point, tile: Rect, crop: Crop): Point {
   if (!(tile.width > 0) || !(tile.height > 0)) {
@@ -55,6 +52,27 @@ export function toTilePoint(point: Point, tile: Rect, crop: Crop): Point {
   };
 }
 
+/**
+ * The thinnest a stroke may be drawn, in destination pixels. A stroke thinner
+ * than this is invisible, which reads as data loss rather than as a fine line.
+ */
+const MIN_STROKE_PX = 0.5;
+
+/**
+ * A stroke's stored width, in the pixels of the surface drawing it.
+ *
+ * `Stroke.width` is a fraction of the source image, exactly as `points` are,
+ * so it converts with the same scale `toTilePoint` applies: the tile spans
+ * `crop.w` of the source, so one unit of source width is `tile.width / crop.w`
+ * pixels. Using this rather than the raw number is what keeps a stroke's
+ * proportions identical on a board tile, on a magnified edit surface, and at
+ * any crop zoom.
+ */
+export function strokeWidthInTile(width: number, tile: Rect, crop: Crop): number {
+  if (!(crop.w > 0) || !(tile.width > 0) || !(width > 0)) return MIN_STROKE_PX;
+  return Math.max(MIN_STROKE_PX, (width * tile.width) / crop.w);
+}
+
 /** Perpendicular distance from `p` to the line through `a` and `b`. */
 function distanceToLine(p: Point, a: Point, b: Point): number {
   const dx = b.x - a.x;
@@ -74,14 +92,16 @@ function pointAt(points: number[], index: number): Point {
  * line between the points that would survive without it.
  *
  * A pen gesture emits one sample per frame — hundreds for a short scribble —
- * and every one is stored in the document, sent on every autosave and redrawn
+ * and every one is stored in the document, sent on every save and redrawn
  * every frame. Thinning is not an optimisation here; it is what keeps drawing
  * on a tile from making the document unusable.
  *
- * Iterative rather than recursive: a stroke can be arbitrarily long and a
- * recursive implementation blows the stack on the pathological input (a long
- * run where every point matters), which is exactly the input a fast scribble
- * on a high-refresh screen produces.
+ * Iterative rather than recursive, because a recursive implementation
+ * overflows the stack on a long run where every point matters.
+ *
+ * Cost grows sharply with the sample count in the worst case, which is
+ * inherent to the algorithm. Callers cap the samples they feed in rather than
+ * letting an unbounded gesture reach it.
  */
 export function simplifyPoints(points: number[], tolerance: number): number[] {
   const count = Math.floor(points.length / 2);
@@ -123,9 +143,8 @@ export function simplifyPoints(points: number[], tolerance: number): number[] {
 /**
  * A finished stroke.
  *
- * The id is passed in rather than generated, for the same reason @tl/core's
- * reducer never generates one: it is what keeps this module pure and every
- * test mock-free.
+ * The id is passed in rather than generated, for the same reason the reducer
+ * never generates one: it keeps this module pure and every test mock-free.
  */
 export function strokeFromPoints(
   id: string,

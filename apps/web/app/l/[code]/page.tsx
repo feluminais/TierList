@@ -71,8 +71,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     },
     twitter: {
       // The large card is what makes a pasted link show the board rather than
-      // a thumbnail beside two lines of text — this milestone's whole
-      // acceptance test is what the link looks like in Discord.
+      // a thumbnail beside two lines of text.
       card: image ? "summary_large_image" : "summary",
       title,
       description,

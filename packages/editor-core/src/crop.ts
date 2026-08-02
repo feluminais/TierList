@@ -51,25 +51,21 @@ export function panCrop(crop: Crop, delta: Point): Crop {
  */
 export function zoomCrop(crop: Crop, factor: number, anchor: Point): Crop {
   // One scale applied to both axes at once, rather than clamping `w` and
-  // deriving `h` from it (or vice versa). Deriving one axis from the other's
-  // already-clamped value lets the derived axis blow *past* its own bound:
-  // when a very wide crop (say h/w = 0.01) zooms in far enough that `w`
-  // floors at MIN_CROP, `h` floors too, and `h`'s own required companion
-  // `h / aspect` comes out above 1 — the crop then runs off the source's
-  // right edge with an aspect ratio that still checks out. A uniform scale
-  // keeps both axes in lockstep, so this cannot happen: whatever scale is
-  // chosen applies identically to `w` and `h`, and the scale itself is
-  // clamped, once, against both axes' bounds before either is computed.
+  // deriving `h` from it. Deriving one axis from the other's already-clamped
+  // value lets the derived axis pass its own bound: an extreme crop can floor
+  // `w` at MIN_CROP while the companion `h` required to hold the aspect comes
+  // out above 1, running off the source with an aspect that still checks out.
+  // A uniform scale keeps both axes in lockstep — the same number applied
+  // twice — and the scale itself is clamped once against both axes' bounds
+  // before either is computed.
   const scaleMin = Math.max(MIN_CROP / crop.w, MIN_CROP / crop.h);
   const scaleMax = Math.min(1 / crop.w, 1 / crop.h);
-  // scaleMin can exceed scaleMax only when the crop's own aspect ratio is so
-  // extreme that no single scale keeps both axes inside [MIN_CROP, 1] at
-  // once — a fixed floor is not the same fraction of a wide axis and a
-  // narrow one. Every aspect `defaultCropFor` can produce (0.75, 1, 1.33) is
-  // nowhere near this, so it can only be reached via a hand-edited or
-  // corrupted document. Staying inside the source wins in that case, for the
-  // same reason the anchor gives way below: a crop that samples outside the
-  // image is a worse outcome than one that is smaller than the usual floor.
+  // scaleMin exceeds scaleMax only for a crop whose aspect is so extreme that
+  // no single scale keeps both axes inside [MIN_CROP, 1] — a fixed floor is
+  // not the same fraction of a wide axis and a narrow one. No aspect
+  // `defaultCropFor` produces comes near it. Staying inside the source wins
+  // there, for the same reason the anchor gives way below: sampling outside
+  // the image is worse than a crop below the usual floor.
   const scale =
     scaleMin > scaleMax ? scaleMax : clamp(1 / factor, scaleMin, scaleMax);
 
@@ -102,10 +98,9 @@ export function zoomCrop(crop: Crop, factor: number, anchor: Point): Crop {
  * two drifting apart over a long drag.
  *
  * Total rather than throwing on a degenerate crop: this feeds a control's
- * *position*, and a document carrying a zero-area crop (nothing validates one
- * — see `migrate()`) should render a control pinned to its end stop rather
- * than take the surface down. The arithmetic that has to refuse such a crop —
- * `toTilePoint`, `imageDrawRect` — still does.
+ * *position*, which should pin to an end stop rather than take the surface
+ * down. The arithmetic that must refuse such a crop — `toTilePoint`,
+ * `imageDrawRect` — still does.
  */
 export function zoomOf(crop: Crop): number {
   const extent = Math.max(crop.w, crop.h);
@@ -213,18 +208,15 @@ function working(state: CropState, context: CropContext): Crop {
 /**
  * How close two crops have to be to count as the same one.
  *
- * Exact equality is wrong here, and not for a theoretical reason: zooming in
- * by 2 and back out by 0.5 is a division and a multiplication in normalized
- * space, and it lands on `0.09999999999999998` rather than `0.1`. Under exact
- * comparison a wheel run that ended where it began would commit an
- * `item/setEdit`, put an undo step on the stack that appears to do nothing,
- * and send a revision over the wire — which is exactly what emitting nothing
- * for an unmoved gesture exists to prevent.
+ * Exact equality is wrong: zooming in and back out by the reciprocal is a
+ * division and a multiplication in normalized space, which does not land back
+ * on the original value in binary floating point. Under exact comparison a
+ * gesture that ended where it began would commit an edit, put an undo step on
+ * the stack that does nothing, and send a revision for it.
  *
- * `1e-9` of a source's extent is under a thousandth of a pixel on a 100,000px
- * image, so nothing a user could express is lost inside it, while double
- * precision noise over a realistic run of operations stays several orders of
- * magnitude below it.
+ * The tolerance is far below anything a user can express — under a thousandth
+ * of a pixel even on a very large image — and far above the rounding noise of
+ * a realistic run of operations.
  */
 const CROP_EPSILON = 1e-9;
 
@@ -261,10 +253,9 @@ function commit(crop: Crop, context: CropContext): TierListAction | null {
  * Drag a pointer across the tile and the crop follows it, in source units.
  *
  * Negated: dragging right moves the *picture* right, which means the window
- * onto the source moves *left*. The two axes scale by their own tile dimension
- * and their own crop extent — never by a shared one — because a tile and a
- * crop are both free to be non-square, and reusing one axis's divisor for the
- * other is exactly the transposition a square fixture cannot catch.
+ * onto the source moves *left*. Each axis scales by its own tile dimension and
+ * its own crop extent, never by a shared one — a tile and a crop are both free
+ * to be non-square.
  */
 function panDelta(from: Point, to: Point, tile: Rect, crop: Crop): Point {
   return {

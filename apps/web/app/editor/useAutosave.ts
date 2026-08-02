@@ -123,7 +123,7 @@ export function useAutosave(
       retrying ? retryMs : debounceMs,
     );
 
-    // Only the timer. Cancelling the request here is the defect described
+    // Only the timer. Cancelling the request here is the failure described
     // above; see also `saveStarted` in @tl/editor-core/src/session.ts.
     return () => clearTimeout(timer);
 

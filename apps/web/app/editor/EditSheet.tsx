@@ -1,12 +1,13 @@
 "use client";
 
-import type { ImageEdit, Item, TierListAction } from "@tl/core";
+import { DEFAULT_STROKE_WIDTH, type ImageEdit, type Item, type TierListAction } from "@tl/core";
 import {
   cropReduce,
   editReduce,
   idleCrop,
   idleEdit,
   maxZoomFor,
+  strokeWidthInTile,
   toTilePoint,
   zoomOf,
   type CropContext,
@@ -38,18 +39,17 @@ import {
 const SHEET_LONG_SIDE = 600;
 
 /**
- * Points are capped here, not in `editReduce`: the machine's contract is to
- * record every point it is given, and deciding which samples are worth
- * keeping is the concern of the surface generating them. `simplifyPoints` is
- * O(n²) worst case, and a fast scribble on a high-refresh screen can produce
- * tens of thousands of raw samples; 1,200 is roughly ten seconds at 120Hz —
- * well past any single stroke — so it bounds the cost at something nobody
- * will ever feel.
+ * A ceiling on the samples one stroke may carry.
+ *
+ * Capped here rather than in `editReduce`, whose contract is to record every
+ * point it is given: deciding which samples are worth keeping belongs to the
+ * surface generating them. Thinning cost grows sharply with the count, and a
+ * fast gesture on a high-refresh screen produces far more samples than a
+ * stroke needs, so this bounds it well above any real stroke.
  */
 const MAX_STROKE_SAMPLES = 1200;
 
 const STROKE_COLOR = "#e6edf3";
-const STROKE_WIDTH = 4;
 
 /**
  * How long after the last wheel notch a zoom run counts as finished.
@@ -68,10 +68,15 @@ const WHEEL_ZOOM_PER_PIXEL = 0.0015;
 
 export type SheetMode = "crop" | "draw";
 
-/** A stroke not yet committed, in the sheet canvas's own coordinate space. */
+/**
+ * A stroke not yet committed, in the sheet canvas's own coordinate space —
+ * both its points and its width, so the canvas draws it without converting
+ * anything.
+ */
 export interface LiveStrokeProps {
   points: number[]; // flat [x0, y0, x1, y1, …]
   color: string;
+  /** Canvas pixels, not the document's source-relative fraction. */
   width: number;
 }
 
@@ -108,6 +113,22 @@ export interface EditSheetProps {
   assetUrl: (assetId: string) => string;
   onAction: (action: TierListAction) => void;
   onClose: () => void;
+}
+
+/**
+ * Remove the item this sheet is open on.
+ *
+ * The sheet is the one surface that names a single item, so it is where
+ * deleting one belongs. No confirmation: it is a single undo step, and the
+ * board shows immediately what went.
+ */
+function removeItem(
+  itemId: string,
+  onAction: (action: TierListAction) => void,
+  onClose: () => void,
+): void {
+  onAction({ type: "item/remove", itemId });
+  onClose();
 }
 
 /**
@@ -148,15 +169,12 @@ export function EditSheet({
   const [crop, setCrop] = useState<CropState>(idleCrop);
 
   // The one source of truth `send` reads and writes. `pointermove` fires
-  // faster than React re-renders — and React batches state updates — so two
-  // moves arriving in the same batch would both call the reducer before
-  // either's setState result had a chance to render. Updating only at render
-  // time means both reads see the same stale state and the earlier of the two
-  // is silently lost. Writing here, synchronously, before setState, means the
-  // very next event in the same batch reads what the previous one produced,
-  // not what last rendered. There is deliberately no second assignment
-  // elsewhere (e.g. back at render time) — two places that can each set these
-  // is exactly the disagreement this removes.
+  // faster than React renders and React batches state updates, so two moves in
+  // one batch would both reduce against the state that last rendered and the
+  // earlier one would be lost. Writing the ref synchronously inside `send`,
+  // before `setState`, means the next event in the same batch reads what the
+  // previous one produced. There is no second assignment anywhere else: two
+  // places that can each set these is the disagreement this removes.
   const editRef = useRef(edit);
   const cropRef = useRef(crop);
 
@@ -246,17 +264,16 @@ export function EditSheet({
       context: penContext,
       strokeId: newStrokeId(),
       color: STROKE_COLOR,
-      width: STROKE_WIDTH,
+      width: DEFAULT_STROKE_WIDTH,
     });
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (mode === "crop") {
-      // `cropReduce` already ignores a move with no pan under way, so there is
-      // no guard here — and deliberately no second one, because a guard reading
-      // the `crop` state variable rather than the ref would be looking at the
-      // previous render's phase and would drop the start of every pan. That is
-      // the defect this file already paid for once, on the pen path.
+      // `cropReduce` ignores a move with no pan under way, so there is no
+      // guard here. A guard reading the `crop` state variable rather than the
+      // ref would see the previous render's phase and drop the start of every
+      // pan; see the pen path below, which reads the ref for that reason.
       sendCrop({ type: "panMove", at: pointFromEvent(event), context: cropContext });
       return;
     }
@@ -348,7 +365,9 @@ export function EditSheet({
       ? {
           points: mapToTile(edit.points, tile, workingCrop),
           color: edit.color,
-          width: edit.width,
+          // Converted here alongside the points, and by the same scale, so the
+          // line under the pointer is the width the committed stroke will have.
+          width: strokeWidthInTile(edit.width, tile, workingCrop),
         }
       : null;
 
@@ -451,9 +470,25 @@ export function EditSheet({
             : "Drag to draw on the tile"}
         </p>
 
-        <button type="button" data-testid="edit-sheet-done" onClick={close} style={doneButton}>
-          Done
-        </button>
+        <div style={{ display: "flex", gap: 8, alignSelf: "stretch" }}>
+          <button
+            type="button"
+            data-testid="edit-sheet-remove"
+            title="Remove this item from the list"
+            onClick={() => removeItem(item.id, onAction, onClose)}
+            style={removeButton}
+          >
+            Remove
+          </button>
+          <button
+            type="button"
+            data-testid="edit-sheet-done"
+            onClick={close}
+            style={{ ...doneButton, flex: 1 }}
+          >
+            Done
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -567,4 +602,11 @@ const doneButton: CSSProperties = {
   cursor: "pointer",
   fontFamily: "inherit",
   alignSelf: "stretch",
+};
+
+const removeButton: CSSProperties = {
+  ...doneButton,
+  background: "#2b1c1e",
+  border: "1px solid #4a2f33",
+  color: "#f5a3a3",
 };

@@ -48,7 +48,7 @@ export function generateShareCode(): string {
  * is spent only on something that might exist. Case is not normalised —
  * codes are issued upper-case and a lower-case one is simply not a code —
  * because a case-insensitive lookup would make two distinct strings name one
- * row, which is the class of bug `assertSafeKey` and the lowercase-only
+ * row, which is the class of problem `assertSafeKey` and the lowercase-only
  * object store keys already exist to foreclose.
  */
 export function isPlausibleShareCode(code: string): boolean {

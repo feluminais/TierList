@@ -31,14 +31,11 @@ export function defaultCropFor(
   source: SourceSize,
   tileAspect: number,
 ): ImageEdit["crop"] {
-  // A source with a zero or non-finite dimension, or a non-finite
-  // `tileAspect`, drives `sourceAspect` to `NaN` or `Infinity / Infinity`
-  // (also `NaN`) — which then survives every `>` comparison below (always
-  // false against `NaN`) and comes out the other side as a crop with `NaN`
-  // fields. `migrate()` performs no structural validation, so a document can
-  // reach this function with any source size at all; failing loudly here,
-  // the same way `imagePlacement` refuses a rotation it cannot honour, is
-  // what stops a `NaN` crop from being written to the document and silently
+  // A zero or non-finite dimension, or a non-finite `tileAspect`, drives
+  // `sourceAspect` to `NaN`, which survives every comparison below (all false
+  // against `NaN`) and comes out as a crop with `NaN` fields. A source size
+  // arrives from a decoded image rather than from the validated document, so
+  // failing loudly here is what stops a `NaN` crop being written and silently
   // breaking every placement computed from it afterwards.
   if (
     !(source.width > 0) ||
@@ -69,9 +66,7 @@ export function defaultCropFor(
 /**
  * A floor on a sampling rectangle, in source pixels. A zero-width or
  * zero-height source rect is not a small draw — it is a division by zero in
- * every renderer that scales one rect onto another, and a document can reach
- * us with any crop at all because `migrate()` performs no structural
- * validation.
+ * every renderer that scales one rect onto another.
  */
 const MIN_SOURCE_PX = 1;
 
@@ -82,12 +77,12 @@ function clamp(n: number, min: number, max: number): number {
 /**
  * Where a tile's image comes from and where it goes.
  *
- * `edit.zoom` and `edit.offset` are **deliberately not read**. An
- * aspect-locked crop rectangle already encodes both framing operations — its
- * size is the zoom and its position is the pan — so reading them as well would
- * be a second encoding of the same information, free to disagree with the rect
- * and with no rule saying which wins. They remain in the schema because
- * removing a field costs a migration and buys nothing.
+ * `edit.zoom` and `edit.offset` are **not read**. An aspect-locked crop
+ * rectangle already encodes both framing operations — its size is the zoom and
+ * its position is the pan — so reading them as well would be a second encoding
+ * of the same information, free to disagree with the rect and with no rule
+ * saying which wins. They stay in the schema because removing a field costs a
+ * migration and buys nothing.
  *
  * The destination is always the whole tile. That is what the aspect lock is
  * for: the crop is chosen to have the tile's shape, so it fills it exactly and
@@ -108,17 +103,16 @@ export function imagePlacement(
     );
   }
 
-  // Clamped rather than trusted: `migrate()` does not validate structure, so a
-  // stored document can carry a crop that runs off the edge of its own image.
+  // Clamped rather than trusted: a crop is a fraction of the source, and the
+  // source is whatever image decoded, so a valid crop can still run off the
+  // edge of a smaller-than-expected image.
   //
-  // `x`/`y` are pulled back from the far edge by `MIN_SOURCE_PX`, not just
-  // clamped to `[0, source.width]`. A crop with `x: 1` clamps to exactly
-  // `source.width`, leaving zero room before the edge — the `MIN_SOURCE_PX`
-  // floor below would then push `width` to 1 with nowhere for it to go,
-  // sampling one pixel past the source's right edge. Reserving the floor's
-  // width when placing `x` keeps every placement this function returns
-  // entirely inside the source, which is the invariant the floor exists to
-  // protect in the first place.
+  // `x`/`y` are pulled back from the far edge by `MIN_SOURCE_PX` rather than
+  // clamped to `[0, source.width]`. A crop at `x: 1` clamps to exactly
+  // `source.width`, leaving no room before the edge, and the floor below would
+  // then push `width` to 1 with nowhere to put it — sampling one pixel past
+  // the right edge. Reserving the floor's width when placing `x` keeps every
+  // placement entirely inside the source, which is what the floor is for.
   const rawX = clamp(edit.crop.x, 0, 1) * source.width;
   const rawY = clamp(edit.crop.y, 0, 1) * source.height;
   const x = Math.min(rawX, Math.max(0, source.width - MIN_SOURCE_PX));
@@ -145,26 +139,15 @@ export function imagePlacement(
  *
  * The two axes scale by **one shared factor** — the larger of the two ratios
  * needed to cover the tile — never by independent `scaleX`/`scaleY` values.
- * An earlier version of this function scaled the axes independently on the
- * theory that deriving one from the other would reintroduce the
- * clamp-then-derive defect that shipped twice in 3A (a value computed from an
- * already-constrained one escaping its own bound). That reasoning conflated
- * two unrelated things: "don't derive one clamped value from another" is a
- * real lesson about *dependent* clamps, but a single scale applied identically
- * to both axes is not a derivation of one axis from the other at all — it is
- * the same number used twice. Independent scaling's actual effect was to
- * stretch the image whenever the crop's aspect ratio did not exactly match the
- * tile's, and that mismatch is reachable even though the crop is meant to be
- * aspect-locked at upload (`defaultCropFor`): `display.tileAspect` is a user
- * setting that can change after the crop was chosen, and `migrate()` performs
- * no structural validation, so a stored document can carry a crop of any
- * shape at all.
+ * Independent scaling stretches the image whenever the crop's aspect ratio
+ * does not exactly match the tile's, and that mismatch is reachable even
+ * though a crop is aspect-locked when the image is added: `display.tileAspect`
+ * is a setting the user can change afterwards.
  *
  * A single scale means a mismatched crop is *cropped further* by the tile's
- * clip rather than distorted — the image's own aspect ratio is preserved, and
- * the tile is always fully covered (never letterboxed: the board has no
- * sensible letterbox colour, and the aspect lock means this should not
- * ordinarily be needed anyway).
+ * clip instead of distorted. The image's own aspect ratio is preserved and the
+ * tile is always fully covered, never letterboxed — the board has no sensible
+ * letterbox colour.
  */
 export function imageDrawRect(
   placement: ImagePlacement,
@@ -179,10 +162,9 @@ export function imageDrawRect(
   // leave the other axis short of the tile.
   const scale = Math.max(dest.width / source.width, dest.height / source.height);
 
-  // Centred on the tile: zero when the crop's aspect already matches the
-  // tile's (source.width*scale === dest.width and source.height*scale ===
-  // dest.height then hold simultaneously), so the matching case reduces to
-  // exactly the old formula and its corners still land on the tile's corners.
+  // Centred on the tile. Both offsets are zero when the crop's aspect already
+  // matches the tile's, so in that case the drawn rect's corners land exactly
+  // on the tile's corners.
   const offsetX = (dest.width - source.width * scale) / 2;
   const offsetY = (dest.height - source.height * scale) / 2;
 

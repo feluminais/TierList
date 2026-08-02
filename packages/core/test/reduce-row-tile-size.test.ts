@@ -90,3 +90,72 @@ describe("reduce — row/setTileSize", () => {
     expect(doc.rows[0]!.tileSizeOverride).toBeUndefined();
   });
 });
+
+describe("reduce — display/setUniformTileSize", () => {
+  it("sets the list-wide size and drops every override", () => {
+    let d = base();
+    d = reduce(d, { type: "row/setTileSize", rowId: ROW, tileSize: 200 }, LATER);
+    d = reduce(d, { type: "row/setTileSize", rowId: OTHER, tileSize: 60 }, LATER);
+
+    const uniform = reduce(d, { type: "display/setUniformTileSize", tileSize: 120 }, LATER);
+
+    expect(uniform.display.tileSize).toBe(120);
+    for (const row of uniform.rows) {
+      expect(row.tileSizeOverride).toBeUndefined();
+    }
+  });
+
+  /**
+   * Cleared rather than rewritten to the new value. A row with no override
+   * *follows* the list-wide size, so tiers made equal stay equal the next time
+   * that size changes; stamping the value onto every row would make them drift
+   * apart again on the very next global change.
+   */
+  it("leaves rows following the list-wide size, not pinned to its current value", () => {
+    let d = reduce(base(), { type: "row/setTileSize", rowId: ROW, tileSize: 200 }, LATER);
+    d = reduce(d, { type: "display/setUniformTileSize", tileSize: 120 }, LATER);
+    d = reduce(d, { type: "display/set", patch: { tileSize: 64 } }, LATER);
+
+    for (const row of d.rows) expect(row.tileSizeOverride).toBeUndefined();
+    expect(d.display.tileSize).toBe(64);
+  });
+
+  it("removes the key entirely, so a row round-trips through JSON unchanged", () => {
+    let d = reduce(base(), { type: "row/setTileSize", rowId: ROW, tileSize: 200 }, LATER);
+    d = reduce(d, { type: "display/setUniformTileSize", tileSize: 120 }, LATER);
+    const row = d.rows.find((r) => r.id === ROW)!;
+    expect(Object.hasOwn(row, "tileSizeOverride")).toBe(false);
+    expect(JSON.parse(JSON.stringify(row))).toEqual(row);
+  });
+
+  it("bumps the revision once for the whole equalisation", () => {
+    let d = reduce(base(), { type: "row/setTileSize", rowId: ROW, tileSize: 200 }, LATER);
+    const before = d.revision;
+    d = reduce(d, { type: "display/setUniformTileSize", tileSize: 120 }, LATER);
+    expect(d.revision).toBe(before + 1);
+  });
+
+  it("does not bump the revision when the size already holds everywhere", () => {
+    const d = base();
+    expect(
+      reduce(d, { type: "display/setUniformTileSize", tileSize: d.display.tileSize }, LATER),
+    ).toBe(d);
+  });
+
+  it("does bump when the size matches but a row still departs from it", () => {
+    const d = reduce(base(), { type: "row/setTileSize", rowId: ROW, tileSize: 200 }, LATER);
+    const next = reduce(
+      d,
+      { type: "display/setUniformTileSize", tileSize: d.display.tileSize },
+      LATER,
+    );
+    expect(next).not.toBe(d);
+    expect(next.rows.find((r) => r.id === ROW)!.tileSizeOverride).toBeUndefined();
+  });
+
+  it("does not mutate the input document", () => {
+    const d = reduce(base(), { type: "row/setTileSize", rowId: ROW, tileSize: 200 }, LATER);
+    reduce(d, { type: "display/setUniformTileSize", tileSize: 120 }, LATER);
+    expect(d.rows.find((r) => r.id === ROW)!.tileSizeOverride).toBe(200);
+  });
+});

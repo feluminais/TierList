@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createTierList } from "../src/factory";
 import { migrate, SchemaTooNewError } from "../src/migrate";
-import { SCHEMA_VERSION, type Placement } from "../src/types";
+import { DEFAULT_STROKE_WIDTH, SCHEMA_VERSION, type Placement } from "../src/types";
 
 const NOW = "2026-07-31T12:00:00.000Z";
 
@@ -256,12 +256,91 @@ describe("schema 1 -> 2: contiguous placement indices", () => {
   });
 });
 
+describe("schema 2 -> 3: stroke widths are source-relative", () => {
+  /** A v2 document with a stroke on an item and one on the board. */
+  function v2(): Record<string, unknown> {
+    return deepFreeze({
+      ...createTierList({ id: "list-1", now: NOW }),
+      schemaVersion: 2,
+      items: [
+        {
+          id: "i1",
+          kind: "text",
+          label: "one",
+          order: 0,
+          edit: {
+            crop: { x: 0, y: 0, w: 1, h: 1 },
+            rotation: 0,
+            zoom: 1,
+            offset: { x: 0, y: 0 },
+            strokes: [
+              { id: "s1", points: [0, 0, 1, 1], color: "#fff", width: 4 },
+              { id: "s2", points: [0, 0, 1, 1], color: "#f00", width: 12 },
+            ],
+          },
+        },
+      ],
+      placements: [{ itemId: "i1", rowId: null, index: 0 }],
+      boardAnnotations: [{ id: "b1", points: [0, 0, 1, 1], color: "#0f0", width: 9 }],
+    });
+  }
+
+  const widthsOf = (doc: { items: { edit: { strokes: { width: number }[] } }[] }) =>
+    doc.items.flatMap((i) => i.edit.strokes.map((s) => s.width));
+
+  it("rewrites every item stroke to the current default width", () => {
+    expect(widthsOf(migrate(v2()))).toEqual([DEFAULT_STROKE_WIDTH, DEFAULT_STROKE_WIDTH]);
+  });
+
+  it("rewrites board annotations too", () => {
+    expect(migrate(v2()).boardAnnotations.map((s) => s.width)).toEqual([
+      DEFAULT_STROKE_WIDTH,
+    ]);
+  });
+
+  it("leaves everything else about a stroke alone", () => {
+    const stroke = migrate(v2()).items[0]!.edit.strokes[0]!;
+    expect(stroke).toMatchObject({ id: "s1", points: [0, 0, 1, 1], color: "#fff" });
+  });
+
+  it("does not mutate the document it was given", () => {
+    const raw = v2();
+    migrate(raw);
+    const items = raw["items"] as { edit: { strokes: { width: number }[] } }[];
+    expect(items[0]!.edit.strokes.map((s) => s.width)).toEqual([4, 12]);
+  });
+
+  it("survives an item with no edit, or strokes that are not an array", () => {
+    const doc = migrate({
+      schemaVersion: 2,
+      items: [{ id: "a" }, { id: "b", edit: { strokes: "none" } }],
+      boardAnnotations: 5,
+    });
+    expect(doc.schemaVersion).toBe(SCHEMA_VERSION);
+  });
+
+  it("carries a v1 document all the way to the current version", () => {
+    const doc = migrate({
+      schemaVersion: 1,
+      items: [
+        {
+          id: "i1",
+          order: 0,
+          edit: { strokes: [{ id: "s", points: [0, 0], color: "#fff", width: 4 }] },
+        },
+      ],
+      placements: [{ itemId: "i1", rowId: null, index: 3 }],
+    });
+    expect(doc.schemaVersion).toBe(SCHEMA_VERSION);
+    expect(doc.placements[0]!.index).toBe(0);
+    expect(doc.items[0]!.edit.strokes[0]!.width).toBe(DEFAULT_STROKE_WIDTH);
+  });
+});
+
 /**
  * The `Migration` contract forbids throwing on a malformed field, so every
  * guard in `migrateV1ToV2` has a branch that only a malformed document
- * reaches. All of them were unexercised. The array-as-placement bug is what an
- * unpinned defensive branch costs: it had a guard, the guard was wrong, and
- * nothing said so.
+ * reaches.
  *
  * Each case states the whole output array, so a change of behaviour in a
  * branch shows up as a diff rather than as a still-passing weaker assertion.

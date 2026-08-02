@@ -200,12 +200,7 @@ export function createRepository(db: Db): Repository {
     },
 
     async createToken(id, tokenHash, now) {
-      await db.insert(deviceTokens).values({
-        id,
-        tokenHash,
-        createdAt: now,
-        lastSeenAt: now,
-      });
+      await db.insert(deviceTokens).values({ id, tokenHash, createdAt: now });
     },
 
     async findTokenId(tokenHash) {

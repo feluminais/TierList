@@ -15,17 +15,15 @@ import type { GestureResponderEvent } from "react-native";
 /**
  * When to fire the hold timer.
  *
- * `dragReduce` does the elapsed-time comparison itself and promotes a press to
- * a drag only once `DRAG_HOLD_MS` has genuinely passed. A timer that fired even
- * a millisecond early would therefore be *rejected*, and because a stationary
- * finger produces no further events there would be nothing to retry with: the
- * drag would silently never start. Late always satisfies the comparison; early
- * never does, so the margin only ever goes one way.
+ * `dragReduce` makes the elapsed-time comparison itself and promotes a press
+ * only once `DRAG_HOLD_MS` has passed, so a timer that fires early is
+ * rejected — and a stationary finger produces no further events, leaving
+ * nothing to retry with and a drag that never starts. Late always satisfies
+ * the comparison; early never does, so the margin only goes one way.
  *
- * It is not there for `setTimeout` overshoot — that direction is safe. It is
- * there because the timer is scheduled against the platform's monotonic clock
- * while the events are stamped with `Date.now()`, and a wall clock can be
- * stepped backwards under a running timer.
+ * The margin is not for `setTimeout` overshoot, which is safe. It is because
+ * the timer runs against the platform's monotonic clock while events are
+ * stamped from the wall clock, which can step backwards under a running timer.
  */
 const HOLD_TIMER_MS = DRAG_HOLD_MS + 10;
 
@@ -33,7 +31,7 @@ export interface BoardGestureOptions {
   layout: BoardLayout;
   /** Applied when a drag commits. One drag produces at most one action. */
   onAction: (action: TierListAction) => void;
-  /** A tap that never became a drag. Milestone 2D gives this a meaning. */
+  /** A tap that never became a drag. The web route opens the edit sheet on it. */
   onTap?: (itemId: string) => void;
   /** Height of the visible scroll viewport, for edge autoscroll. */
   viewportHeight?: number;
@@ -219,8 +217,8 @@ export function useBoardGesture(options: BoardGestureOptions): BoardGesture {
       const state = dragRef.current;
       const { viewportHeight: height, scrollY: offset, onAutoScroll: scroll } =
         scrollRef.current;
-      // Measured after the drag began is still measured: the guard is here
-      // rather than on the effect so a viewport that arrives late still works.
+      // Guarded here rather than on the effect, so a viewport measured after
+      // the drag began still takes effect.
       if (state.phase !== "dragging" || !scroll || !height) return;
 
       // `pointer` is in content coordinates; the edge bands are in viewport

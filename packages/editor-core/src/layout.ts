@@ -18,6 +18,28 @@ const ASPECT_RATIO: Record<TileAspect, number> = {
 /** The narrowest the tiles area is allowed to get before the label gives way. */
 const MIN_TILES_WIDTH = 40;
 
+/**
+ * What a tile may be scaled to, in px.
+ *
+ * The bounds live here, beside the layout that consumes the number, so every
+ * control that sets one — a slider, a corner drag — clamps to the same pair
+ * rather than each carrying its own copy. Below the floor a tile is too small
+ * to recognise a picture in; above the ceiling a single tier fills the window
+ * and the list stops being scannable, which is the whole point of a tier list.
+ *
+ * `layoutBoard` does not clamp to these. A stored document can carry any size
+ * — nothing validates one — and silently redrawing it at a different size
+ * would make the board disagree with the document it is rendering.
+ */
+export const MIN_TILE_SIZE = 48;
+export const MAX_TILE_SIZE = 240;
+
+/** Clamp a proposed tile size into the range controls are allowed to set. */
+export function clampTileSize(size: number): number {
+  if (!Number.isFinite(size)) return MIN_TILE_SIZE;
+  return Math.min(Math.max(Math.round(size), MIN_TILE_SIZE), MAX_TILE_SIZE);
+}
+
 export interface LayoutOptions {
   /** Width available to the whole board, in px. */
   width: number;

@@ -7,17 +7,16 @@ import { useEffect, useRef, useState } from "react";
  * Where the anonymous device token is kept between visits.
  *
  * Minting a fresh one on every load would orphan every list the previous token
- * owned, because writes are ownership-scoped (see the 1D plan).
+ * owned, because writes are ownership-scoped.
  */
 export const TOKEN_STORAGE_KEY = "tl.deviceToken";
 
 /**
  * What the editor knows about the server.
  *
- * `disconnected` is not an error. No API runs in development by default and no
- * real Postgres has ever been connected to this project, so the honest thing
- * for an unset `NEXT_PUBLIC_API_URL` is to say nothing is being saved — not to
- * show a failure, and certainly not to show a success.
+ * `disconnected` is not an error. No API runs by default, so the honest answer
+ * for an unset `NEXT_PUBLIC_API_URL` is that nothing is being saved — neither
+ * a failure nor a success.
  */
 export type Connection =
   | { state: "disconnected" }
@@ -70,19 +69,16 @@ export function useApiClient(
       try {
         let token = storage?.getItem(TOKEN_STORAGE_KEY) ?? undefined;
 
-        // A stored token can name a device the server has forgotten — the
-        // database was reset, the row was pruned, or (routinely, in
-        // development) the scratch API restarted and its in-memory tokens went
-        // with it. Without this check the token is used anyway, every
-        // authenticated write comes back 401, and `useAutosave` treats that as
-        // a transient failure and retries it forever: the readout says "Save
-        // failed — retrying" and nothing the user can do will clear it,
-        // because the one thing that would — minting a new token — only ever
-        // happened when there was no stored token at all.
+        // A stored token can name a device the server has forgotten: the
+        // database was reset, the row was pruned, or the scratch API restarted
+        // and its in-memory tokens went with it. Unchecked, every
+        // authenticated write then answers 401, which `useAutosave` treats as
+        // transient and retries forever — an unrecoverable "Save failed"
+        // readout, because the only thing that would clear it is minting a new
+        // token.
         //
-        // Costs one round trip per page load. Worth it: without it,
-        // `connected` claims something it has not established, and the failure
-        // it hides is unrecoverable rather than merely slow.
+        // Costs one round trip per load, and buys a `connected` state that has
+        // actually been established.
         if (token) {
           const live = await tokenIsLive(createClient({ baseUrl, token, fetch: doFetch }));
           if (!live) token = undefined;

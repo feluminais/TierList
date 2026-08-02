@@ -3,6 +3,7 @@ import {
   imageDrawRect,
   imagePlacement,
   layoutBoard,
+  strokeWidthInTile,
   toTilePoint,
   type Rect,
 } from "@tl/editor-core";
@@ -11,16 +12,15 @@ import type { CSSProperties } from "react";
 /**
  * The width the board is laid out against, in "board units".
  *
- * Nothing is ever rendered at this size. Every position below is divided by it
- * and emitted as a percentage, so the board scales fluidly to whatever the
- * container gives it — which is what lets this page be a single server-rendered
- * HTML document with no measurement, no layout effect and no client JavaScript
- * at all. A fixed pixel board would need JS to fit a phone, and "opens fast" is
- * half of what this milestone is for.
+ * Nothing is rendered at this size. Every position below is divided by it and
+ * emitted as a percentage, so the board scales fluidly to whatever the
+ * container gives it — which is what lets this page be a single
+ * server-rendered document with no measurement, no layout effect and no client
+ * JavaScript. A fixed pixel board would need script to fit a phone.
  *
  * The value still matters: `layoutBoard` decides how many tiles fit per line
- * from it, so it sets the *shape* of the board even though it sets none of its
- * pixels. 1000 gives a desktop-like number of columns.
+ * from it, so it sets the board's *shape* even though it sets none of its
+ * pixels. This gives a desktop-like number of columns.
  */
 const BOARD_UNITS = 1000;
 
@@ -49,16 +49,14 @@ export function StaticBoard({
   /**
    * Intrinsic pixel sizes by asset id, from `GET /shares/:code`.
    *
-   * Load-bearing, and it took a test to establish that. A crop is stored as a
-   * *fraction of the source*, so `imagePlacement` produces a source rectangle
-   * whose aspect ratio depends on the source's own — and `imageDrawRect`'s
-   * cover scale is `max(dest/source)` over both axes, which therefore picks a
-   * different dominant axis for a 4000x2500 image than for a square one. The
-   * first version of this component passed an arbitrary square size on the
-   * theory that every number came out proportional to it and the ratios would
-   * cancel. They do not: the size cancels, the *aspect* does not, and the
-   * image landed in visibly the wrong place. An id missing from this map
-   * degrades to a plain centred cover — see `ImageLayer`.
+   * Load-bearing, and not substitutable with a placeholder. A crop is stored
+   * as a *fraction of the source*, so `imagePlacement` produces a source
+   * rectangle whose aspect ratio depends on the source's own, and
+   * `imageDrawRect`'s cover scale takes the larger ratio over both axes — so
+   * the source's shape decides which axis wins. Passing an arbitrary square
+   * size does not cancel out: the magnitude does, the aspect does not, and the
+   * image lands in the wrong place. An id missing from this map degrades to a
+   * plain centred cover; see `ImageLayer`.
    */
   sources: ReadonlyMap<string, { width: number; height: number }>;
 }) {
@@ -84,7 +82,7 @@ export function StaticBoard({
       <div key={key} style={{ ...box(rect), ...tileStyle(item) }}>
         <TileContent item={item} rect={rect} assetUrl={assetUrl} sources={sources} />
         {doc.display.showLabels && item.label ? (
-          <span style={{ ...tileLabel, fontSize: cqw(tileFontUnits(rect.width)) }}>
+          <span style={{ ...tileLabel, fontSize: cqw(tileFontUnits(doc.display.tileSize)) }}>
             {item.label}
           </span>
         ) : null}
@@ -168,17 +166,23 @@ function TileContent({
         />
       ) : null}
       {/*
-        Outside the image branch, exactly as `StrokeLayer` is drawn
-        unconditionally inside the clip on the canvas: a text tile, or an image
-        that never arrives, still owns whatever was drawn on it. Nesting the
-        strokes inside the image's condition is the defect Milestone 3 already
-        shipped once — an `item/setEdit` in the document painting nothing.
+        Outside the image branch, matching `StrokeLayer` on the canvas: a text
+        tile, or an image that never arrives, still owns whatever was drawn on
+        it. Nesting the strokes inside the image's condition would leave
+        strokes in the document painting nothing.
       */}
       <StrokeSvg item={item} dest={dest} />
     </>
   );
 }
 
+/**
+ * A tile's picture, positioned by the same arithmetic the canvas uses.
+ *
+ * A plain `<img>` rather than `next/image`: the asset endpoint already serves
+ * immutable, cache-forever bytes, and routing them through a second optimiser
+ * costs a round trip on a page whose point is opening fast.
+ */
 function ImageLayer({
   item,
   assetId,
@@ -197,10 +201,9 @@ function ImageLayer({
     try {
       draw = imageDrawRect(imagePlacement(source, item.edit, dest), source);
     } catch {
-      // `imagePlacement` throws on a rotation it cannot honour, and a stored
-      // document can carry one (nothing validates structure — see
-      // `migrate()`). A public page showing the tile without its picture beats
-      // a 500 for every reader of the link.
+      // `imagePlacement` refuses a rotation it cannot honour. A public page
+      // showing the tile without its picture beats a server error for every
+      // reader of the link.
       return null;
     }
   }
@@ -208,11 +211,11 @@ function ImageLayer({
   if (!draw) {
     // No size for this asset — it was deleted, or the share response predates
     // the field. A centred cover is the honest degradation: it fills the tile
-    // without distorting the image, and it is what the crop would have been
-    // before the author touched it. Silently placing it by a guessed source
-    // size would put the wrong part of the picture in the tile and look
-    // deliberate.
+    // without distorting the image, and it is the framing the crop would have
+    // had before the author touched it. Placing it by a guessed source size
+    // would put the wrong part of the picture in the tile and look deliberate.
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         src={assetUrl(assetId)}
         alt={item.label ?? ""}
@@ -222,10 +225,7 @@ function ImageLayer({
   }
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- the asset endpoint
-    // is already immutable and cache-forever, and next/image would route a
-    // public, already-optimised byte stream through a second optimiser on a
-    // page whose whole point is opening fast.
+    // eslint-disable-next-line @next/next/no-img-element
     <img
       src={assetUrl(assetId)}
       alt={item.label ?? ""}
@@ -262,7 +262,7 @@ function StrokeSvg({ item, dest }: { item: Item; dest: Rect }) {
           points={strokePoints(stroke, dest, item.edit.crop)}
           fill="none"
           stroke={stroke.color}
-          strokeWidth={stroke.width}
+          strokeWidth={strokeWidthInTile(stroke.width, dest, item.edit.crop)}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
@@ -272,8 +272,8 @@ function StrokeSvg({ item, dest }: { item: Item; dest: Rect }) {
 }
 
 function strokePoints(stroke: Stroke, dest: Rect, crop: Item["edit"]["crop"]): string {
-  // A zero-area crop makes `toTilePoint` throw, and a stored document can carry
-  // one. Dropping the stroke is the same call `ImageLayer` makes for a rotation.
+  // A zero-area crop makes `toTilePoint` throw. Dropping the stroke is the
+  // same call `ImageLayer` makes for a rotation.
   if (!(crop.w > 0) || !(crop.h > 0)) return "";
   const out: string[] = [];
   for (let p = 0; p + 1 < stroke.points.length; p += 2) {
@@ -313,7 +313,14 @@ function cqw(units: number): string {
   return `${round((units / BOARD_UNITS) * 100)}cqw`;
 }
 
-/** Mirrors `tileFontSize` in @tl/editor's theme, in board units. */
+/**
+ * Mirrors `tileFontSize` in @tl/editor's theme, in board units.
+ *
+ * Taken from the document's tile size rather than from the tile being drawn,
+ * which is the same argument the canvas passes: one font size serves the whole
+ * board there, so deriving it per tile here would make a row with a size
+ * override render its labels at a size the canvas never uses.
+ */
 function tileFontUnits(tileWidth: number): number {
   return Math.max(9, Math.min(16, Math.round(tileWidth / 7)));
 }
@@ -323,9 +330,9 @@ function rowFontUnits(labelWidth: number, rowHeight: number): number {
   return Math.max(12, Math.min(40, Math.round(Math.min(labelWidth / 3, rowHeight / 2.5))));
 }
 
-// Kept in step with @tl/editor/theme.ts by eye rather than by import: that
-// package pulls in react-native-skia, which must never be evaluated on a
-// server-rendered public page.
+// Copied from @tl/editor/theme.ts rather than imported: that package pulls in
+// react-native-skia, which must never be evaluated on a server-rendered page.
+// Change both together.
 const BOARD_BACKGROUND = "#14161a";
 const BOARD_LINE = "#0b0d10";
 const ROW_LABEL_TEXT = "#14161a";

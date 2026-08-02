@@ -4,7 +4,6 @@ import type { AssetResponse } from "@tl/api-client";
 import {
   createTierList,
   defaultImageEdit,
-  reduce,
   type TierList,
   type TierListAction,
   type TileAspect,
@@ -30,6 +29,7 @@ import {
 } from "react";
 import { downloadBytes, filenameFor } from "./download";
 import { EditSheet, type EditCanvasComponent } from "./EditSheet";
+import { TierOverlay } from "./TierOverlay";
 import { TileEditOverlay } from "./TileEditButton";
 import { Toolbar } from "./Toolbar";
 import { useApiClient } from "./useApiClient";
@@ -66,15 +66,14 @@ type BoardProps = {
  * This is also the width of the surface below that claims touch input, so the
  * two cannot drift apart.
  *
- * It was fixed at 800px, which was wrong at both ends: it wasted most of a
- * desktop window while leaving a phone cramped at roughly two tiles per line.
- * The floor stops a narrow screen collapsing the tiles area to nothing; the
- * ceiling stops a tier row becoming an unscannable ribbon on an ultrawide,
- * where the eye has to travel the whole screen to compare two tiles.
+ * The floor stops a narrow screen collapsing the tiles area to nothing. The
+ * ceiling stops a tier becoming an unscannable ribbon on a wide monitor, where
+ * the eye has to cross the whole screen to compare two tiles.
  *
- * The width is measured, not guessed from a breakpoint, because `layoutBoard`
- * takes a number and everything downstream — hit-testing, drag targeting, the
- * hover overlay — must be given the *same* number the canvas was drawn with.
+ * The width is measured rather than guessed from a breakpoint, because
+ * `layoutBoard` takes a number and everything downstream — hit-testing, drag
+ * targeting, the hover overlay — must be given the same number the canvas was
+ * drawn with.
  */
 const MIN_BOARD_WIDTH = 320;
 const MAX_BOARD_WIDTH = 1400;
@@ -97,11 +96,10 @@ const LIST_ID_KEY = "tl.listId";
  *
  *     export const Skia = JsiSkApi(global.CanvasKit);
  *
- * so that module must not be evaluated until after CanvasKit is on the global.
- * Doing both imports dynamically, in order, inside the effect makes that
- * ordering explicit instead of relying on bundler chunking — which the spike
- * proved differs between dev and production, and not in the direction anyone
- * assumed.
+ * so that module must not be evaluated until CanvasKit is on the global. Doing
+ * both imports dynamically, in order, inside the effect makes that ordering
+ * explicit rather than relying on bundler chunking, which differs between dev
+ * and production builds.
  */
 export default function SkiaHost() {
   const [Board, setBoard] = useState<ComponentType<BoardProps> | null>(null);
@@ -133,10 +131,10 @@ export default function SkiaHost() {
     };
   }, []);
 
-  // The list this page edits. Persisted so a reload returns to the same
-  // document — which is Milestone 3's actual acceptance test. Chosen in an
-  // effect rather than during render because `localStorage` does not exist on
-  // the server and a value read during render would differ between the two.
+  // The list this page edits, remembered so a reload returns to the same
+  // document. Chosen in an effect rather than during render because
+  // `localStorage` does not exist on the server, and a value read during
+  // render would differ between the server and the first client render.
   const [listId, setListId] = useState<string | null>(null);
   useEffect(() => {
     let id = window.localStorage.getItem(LIST_ID_KEY);
@@ -176,7 +174,7 @@ export default function SkiaHost() {
   // write will be a create. This placeholder is replaced the moment `listId`
   // (and, if there is a client, a load) resolves — see the effect below — so
   // it is never what a save actually goes out against.
-  const [session, setSession] = useState(() => createSession(sampleDoc("preview"), null));
+  const [session, setSession] = useState(() => createSession(emptyDoc("preview"), null));
   // Whether `session` is actually the list this route means to edit, rather
   // than the "preview" placeholder above. Gates autosave below: without it, a
   // slow `getList` round trip leaves the placeholder's `syncedRevision: null`
@@ -196,7 +194,7 @@ export default function SkiaHost() {
     if (!client) {
       // No API configured is the normal state of this route. Start a local
       // document under the real id so nothing downstream has to special-case it.
-      setSession(createSession(sampleDoc(listId), null));
+      setSession(createSession(emptyDoc(listId), null));
       setLoaded(true);
       return;
     }
@@ -211,7 +209,7 @@ export default function SkiaHost() {
       setSession(
         existing
           ? createSession(existing, existing.revision)
-          : createSession(sampleDoc(listId), null),
+          : createSession(emptyDoc(listId), null),
       );
       setLoaded(true);
     })();
@@ -294,9 +292,15 @@ export default function SkiaHost() {
     (tileSize: number) => dispatch({ type: "display/set", patch: { tileSize } }),
     [dispatch],
   );
-  const onRowTileSize = useCallback(
-    (rowId: string, tileSize: number | null) =>
-      dispatch({ type: "row/setTileSize", rowId, tileSize }),
+  // Adding a tier is the one tier action that reaches `dispatch` through a
+  // callback: it needs an id, and the reducer generates none, so this boundary
+  // is where that rule meets the UI. Everything else a tier can have done to
+  // it — rename, recolour, reorder, resize, remove — is dispatched by
+  // `TierOverlay` itself, because none of it needs anything this component
+  // owns and a pass-through per action would be five more places to keep in
+  // step with the reducer.
+  const onAddRow = useCallback(
+    (label: string, color: string) => dispatch({ type: "row/add", id: newId(), label, color }),
     [dispatch],
   );
   const onTileAspect = useCallback(
@@ -340,9 +344,9 @@ export default function SkiaHost() {
     );
   }, [session.doc]);
 
-  // JPEG for the link preview, not PNG: a board of photographs encodes to a
-  // fraction of the size, and "opens fast" is half of what this milestone is
-  // for. Every OG consumer accepts JPEG.
+  // JPEG for the link preview rather than PNG: a board of photographs encodes
+  // far smaller, and a preview card has to load quickly. Every consumer of an
+  // OG image accepts JPEG.
   const ogImage = useCallback(() => exporter?.toImage("jpg") ?? null, [exporter]);
   const shareUrlFor = useCallback(
     (code: string) => `${window.location.origin}/l/${code}`,
@@ -350,16 +354,13 @@ export default function SkiaHost() {
   );
   const sharing = useShare(client, listId, ogImage, shareUrlFor);
 
-  // Which tile a sheet is open for, if any. `onTap` is the handler
-  // `useBoardGesture`/`dragReduce` have had a slot for since Milestone 2D —
-  // "2D gives this a meaning" never happened until now.
+  // Which tile a sheet is open for, if any.
   //
-  // Below, this only reaches the board as `onTap` when `!pointerFine`: a
-  // hover-capable device gets the corner button instead (a click is free once
-  // a drag starts immediately, so a plain tap opening the sheet would take
-  // over the click a drag also wants). Touch keeps `onTap`, because touch has
-  // no hover and would otherwise have no way to reach the sheet at all —
-  // giving it a real affordance of its own is Milestone 8's problem.
+  // This reaches the board as `onTap` only when `!pointerFine`. A
+  // hover-capable device gets the corner button instead: a drag there starts
+  // on movement, so a plain tap opening the sheet would compete with the click
+  // a drag also wants. Touch keeps `onTap`, having no hover and otherwise no
+  // way to reach the sheet at all.
   const [editing, setEditing] = useState<string | null>(null);
   const onTap = useCallback((itemId: string) => setEditing(itemId), []);
   const editingItem = editing
@@ -423,7 +424,6 @@ export default function SkiaHost() {
         uploadError={upload.error}
         tileSize={session.doc.display.tileSize}
         onTileSize={onTileSize}
-        onRowTileSize={onRowTileSize}
         onTileAspect={onTileAspect}
         onExportImage={exporter ? onExportImage : null}
         onExportJson={onExportJson}
@@ -460,34 +460,47 @@ export default function SkiaHost() {
         // The hover overlay is only mounted on a hover-capable device: touch
         // has no hover to track and no need for the extra wrapper, so the
         // touch path stays exactly what it was.
-        pointerFine ? (
-          <TileEditOverlay doc={session.doc} width={boardWidth} dragging={dragging} onEdit={onTap}>
+        // `TierOverlay` wraps the tile overlay rather than sitting beside it,
+        // so its layer is later in the DOM and therefore above — a tier's
+        // handle has to win over the tile layer beneath, which is transparent
+        // to pointer events everywhere except the one button in it.
+        <TierOverlay
+          doc={session.doc}
+          width={boardWidth}
+          dragging={dragging}
+          immediate={pointerFine}
+          onAction={dispatch}
+          onAddRow={onAddRow}
+        >
+          {pointerFine ? (
+            <TileEditOverlay doc={session.doc} width={boardWidth} dragging={dragging} onEdit={onTap}>
+              <div style={{ touchAction: "none", width: boardWidth }}>
+                <Board
+                  doc={session.doc}
+                  width={boardWidth}
+                  onAction={dispatch}
+                  onDraggingChange={setDragging}
+                  immediateDrag
+                  onExporterReady={onExporterReady}
+                  assetIds={assetIds}
+                  assetUrl={assetUrl}
+                />
+              </div>
+            </TileEditOverlay>
+          ) : (
             <div style={{ touchAction: "none", width: boardWidth }}>
               <Board
                 doc={session.doc}
                 width={boardWidth}
                 onAction={dispatch}
-                onDraggingChange={setDragging}
-                immediateDrag
+                onTap={onTap}
                 onExporterReady={onExporterReady}
                 assetIds={assetIds}
                 assetUrl={assetUrl}
               />
             </div>
-          </TileEditOverlay>
-        ) : (
-          <div style={{ touchAction: "none", width: boardWidth }}>
-            <Board
-              doc={session.doc}
-              width={boardWidth}
-              onAction={dispatch}
-              onTap={onTap}
-              onExporterReady={onExporterReady}
-              assetIds={assetIds}
-              assetUrl={assetUrl}
-            />
-          </div>
-        )
+          )}
+        </TierOverlay>
       )}
       {editingItem && EditCanvasComp ? (
         <EditSheet
@@ -530,23 +543,17 @@ function newId(): string {
   return `item-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** A throwaway document so there is something to look at before a real list
- *  id has been chosen (see the `listId` effect) or while disconnected. */
-function sampleDoc(id: string): TierList {
-  const seeded = "2026-08-01T12:00:00.000Z";
-  let doc = createTierList({ id, now: seeded });
-  // Rows are derived from the id by createTierList (`${id}-row-${i}`), so
-  // reference them by index rather than hard-coding a value that was only ever
-  // right for id === "preview". Getting this wrong is silent: a stale row id
-  // matches nothing, `placement/place` no-ops, and the board renders with
-  // every item stuck in the tray and no error anywhere.
-  const rows = doc.rows.map((r) => r.id);
-  const labels = ["Ramen", "Udon", "Soba", "Pho", "Laksa", "Bun bo Hue"];
-  labels.forEach((label, i) => {
-    doc = reduce(doc, { type: "item/addText", id: `i${i}`, label }, seeded);
-  });
-  doc = reduce(doc, { type: "placement/place", itemId: "i0", rowId: rows[0]!, index: 0 }, seeded);
-  doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: rows[0]!, index: 1 }, seeded);
-  doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: rows[1]!, index: 0 }, seeded);
-  return doc;
+/**
+ * The document a list starts from: the default tiers and an empty tray.
+ *
+ * Empty rather than seeded with example items. This is not a preview — with an
+ * API connected it is created on the server as the user's real list, so
+ * anything in it is content they did not add and have to remove.
+ *
+ * The timestamp is fixed rather than read from the clock so the same id always
+ * produces the same document, and a render on the server matches the first
+ * render in the browser.
+ */
+function emptyDoc(id: string): TierList {
+  return createTierList({ id, now: "2026-08-01T12:00:00.000Z" });
 }

@@ -159,9 +159,7 @@ export function TierBoard({ doc, width, layout, drag, images, canvasRef }: TierB
    * Everything inside a tile: its fill, its image, its strokes and its label.
    *
    * Shared by the board's tiles and by the drag preview, so a tile cannot look
-   * like one thing in place and something else under the finger. They were
-   * separate once, and the preview simply never grew an image or strokes —
-   * dragging a picture showed an empty grey box.
+   * like one thing in place and something else under the finger.
    */
   const drawTileContent = (item: Item, dest: GeometryRect, entry: ImageEntry | undefined) => {
     const ready = entry?.status === "ready" ? entry.image : null;
@@ -198,9 +196,8 @@ export function TierBoard({ doc, width, layout, drag, images, canvasRef }: TierB
   // and not the other.
   const drawTile = (tile: TileBox, i: number) => {
     const item = itemsById.get(tile.itemId);
-    // A placement can outlive its item on a document that reached us without
-    // passing through the reducer — see the migrate() validation gap in
-    // STATE.md. Skip rather than draw a hole.
+    // Skip rather than draw a hole. A valid document has no placement without
+    // an item, but a renderer that assumed it would crash on one.
     if (!item) return null;
 
     // The tile this drag lifted. It stays drawn — the document does not change
@@ -211,9 +208,8 @@ export function TierBoard({ doc, width, layout, drag, images, canvasRef }: TierB
     const lifted = drag?.phase === "dragging" && drag.itemId === item.id;
 
     return (
-      // Position is part of the key because migrate() performs no structural
-      // validation, so the same item can appear twice in one location. A bare
-      // itemId would collide there.
+      // Position is part of the key so that a document holding the same item
+      // twice in one location still produces distinct keys.
       <Group key={`${tile.itemId}:${i}`} opacity={lifted ? LIFTED_TILE_OPACITY : 1}>
         {drawTileContent(item, tile.rect, item.assetId ? images?.get(item.assetId) : undefined)}
       </Group>

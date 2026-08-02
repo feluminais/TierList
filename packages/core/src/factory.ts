@@ -61,7 +61,10 @@ export function createTierList(params: CreateTierListParams): TierList {
     placements: [],
     display: defaultDisplay(),
     boardAnnotations: [],
-    authorId: params.authorId,
+    // Spread rather than assigned, so an absent author leaves no key behind.
+    // A document is stored as JSON, where a key holding `undefined` and an
+    // absent key round-trip to the same thing.
+    ...(params.authorId === undefined ? {} : { authorId: params.authorId }),
     createdAt: params.now,
     updatedAt: params.now,
     revision: 0,

@@ -1,4 +1,4 @@
-import { migrate, type TierList } from "@tl/core";
+import { migrate, validateDocument, type TierList } from "@tl/core";
 import { Hono } from "hono";
 import { createHash, randomUUID } from "node:crypto";
 import { requireOwner, type AuthVars } from "./auth";
@@ -15,13 +15,11 @@ export interface RouteDeps {
 
 /**
  * A ceiling on what gets *stored*, not on what gets received. The body is
- * buffered whole before this check ever runs — `sniffImage` and the checksum
- * both need the complete bytes — so a request larger than this still costs
- * the memory to receive in full; this only stops the result from being
- * written to the object store afterward. Bounding the received size would
- * need a limit enforced before buffering (`hono/bodyLimit`, or a cap at the
- * server itself), and nothing wires that up today. That is a real gap, left
- * for 1E (deploy) to close, not a property this constant already provides.
+ * buffered whole before this check runs — `sniffImage` and the checksum both
+ * need the complete bytes — so a larger request still costs the memory to
+ * receive in full, and this only stops the result being written to the object
+ * store. Bounding the received size needs a limit enforced before buffering,
+ * which nothing wires up; that gap belongs with the deploy.
  */
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
@@ -48,17 +46,33 @@ function isPlausibleAssetId(id: string): boolean {
   return id.length > 0 && id.length <= MAX_ASSET_ID_LENGTH && !id.includes("\0");
 }
 
+/** A parsed document, or the reasons it was refused. */
+type ParseResult =
+  | { ok: true; doc: TierList }
+  | { ok: false; problems: string[] };
+
 /**
- * Parses an untrusted body into a TierList using @tl/core's own migrate(),
- * which is the only code allowed to decide what a valid document is.
- * Returns null rather than throwing so callers map it to a 400.
+ * Turn an untrusted body into a document, in the two steps @tl/core defines:
+ * `migrate` brings it to the current schema, `validateDocument` checks it
+ * against the model's structural rules.
+ *
+ * Both are needed. Migration is deliberately tolerant of fields it cannot make
+ * sense of, so it alone would let a document through carrying a title that is
+ * not a string or a timestamp that is not a date — values this service then
+ * projects into typed database columns, where they fail as a server error
+ * rather than as the client error they are.
  */
-function parseDocument(value: unknown): TierList | null {
+function parseDocument(value: unknown): ParseResult {
+  let migrated: unknown;
   try {
-    return migrate(value);
-  } catch {
-    return null;
+    migrated = migrate(value);
+  } catch (e) {
+    return { ok: false, problems: [e instanceof Error ? e.message : "unreadable document"] };
   }
+
+  const problems = validateDocument(migrated);
+  if (problems.length > 0) return { ok: false, problems };
+  return { ok: true, doc: migrated as TierList };
 }
 
 export function createRoutes(deps: RouteDeps) {
@@ -86,9 +100,12 @@ export function createRoutes(deps: RouteDeps) {
   routes.put("/lists/:id", requireOwner(deps.repository), async (c) => {
     const id = c.req.param("id");
     const body = await c.req.json().catch(() => null);
-    const doc = parseDocument((body as { document?: unknown })?.document);
+    const parsed = parseDocument((body as { document?: unknown })?.document);
 
-    if (!doc) return c.json({ error: "invalid document" }, 400);
+    if (!parsed.ok) {
+      return c.json({ error: "invalid document", problems: parsed.problems }, 400);
+    }
+    const doc = parsed.doc;
     if (doc.id !== id) return c.json({ error: "id mismatch" }, 400);
 
     const created = await deps.repository.create(doc, c.get("ownerId"));
@@ -110,10 +127,13 @@ export function createRoutes(deps: RouteDeps) {
       expectedRevision?: unknown;
     } | null;
 
-    const doc = parseDocument(body?.document);
+    const parsed = parseDocument(body?.document);
     const expected = body?.expectedRevision;
 
-    if (!doc) return c.json({ error: "invalid document" }, 400);
+    if (!parsed.ok) {
+      return c.json({ error: "invalid document", problems: parsed.problems }, 400);
+    }
+    const doc = parsed.doc;
     if (doc.id !== id) return c.json({ error: "id mismatch" }, 400);
     if (typeof expected !== "number") {
       return c.json({ error: "expectedRevision is required" }, 400);
@@ -257,20 +277,18 @@ export function createRoutes(deps: RouteDeps) {
    * for one list would mean the OG image cached against one of them is
    * silently not the one a reader gets.
    *
-   * `ogAssetId` is optional and is an ordinary asset the *client* uploaded.
-   * The design doc specifies OG images "generated server-side at share time…
-   * reusing the @tl/editor render path headlessly via canvaskit-wasm"; this is
-   * a deliberate deviation, and the reason is that the client has already
-   * rendered exactly that picture. `@tl/editor` is a React + react-native-skia
-   * component tree, and there is no headless renderer for it in Node — running
-   * it server-side would mean a *second* drawing implementation over raw
-   * canvaskit, which is precisely the arrangement that let `imageDrawRect`
-   * distort every image for a whole milestone while its own tests stayed
-   * green. Snapshotting the editor's live canvas guarantees the preview and
-   * the board agree because they are the same pixels, and it lands in the same
-   * public, immutable, cache-forever asset path a tile image already uses. The
-   * cost is that a share created by a client that could not snapshot has no
-   * preview image, which degrades to a link with a title and no picture.
+   * `ogAssetId` names an ordinary asset the *client* uploaded, rather than an
+   * image this service renders. The design doc specifies a server-side render
+   * reusing the editor's own path headlessly; this deviates from it because
+   * `@tl/editor` is a React and react-native-skia component tree with no
+   * headless renderer in Node, so a server-side version would be a second
+   * drawing implementation over raw canvaskit — two implementations that can
+   * disagree about the same picture. Snapshotting the editor's live canvas
+   * makes the preview and the board the same pixels, and the result lands in
+   * the public, immutable asset path a tile image already uses.
+   *
+   * The cost is that a client which cannot snapshot produces a link with a
+   * title and no picture.
    */
   routes.post("/lists/:id/share", requireOwner(deps.repository), async (c) => {
     // Hono types this as possibly undefined for a path with a segment *after*
@@ -295,6 +313,14 @@ export function createRoutes(deps: RouteDeps) {
     const currentOwner = await deps.repository.findOwner(listId);
     if (currentOwner === null || currentOwner !== ownerId) {
       return c.json({ error: "not found" }, 404);
+    }
+
+    // An id that names no asset would become an `og:image` URL that 404s, so
+    // the share is refused rather than created with a preview that cannot
+    // load. Checked after ownership, so it cannot be used to probe which
+    // asset ids exist.
+    if (ogAssetId && !(await deps.repository.findAsset(ogAssetId))) {
+      return c.json({ error: "unknown ogAssetId" }, 400);
     }
 
     const existing = await deps.repository.findShareByList(listId);

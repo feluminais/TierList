@@ -5,9 +5,6 @@ import type { EditorSession } from "@tl/editor-core";
 import { useState, type CSSProperties, type FormEvent } from "react";
 import type { Connection } from "./useApiClient";
 
-/** "All rows" — the global `display.tileSize` rather than any one row. */
-const GLOBAL = "";
-
 const ASPECTS: { value: TileAspect; label: string }[] = [
   { value: "square", label: "Square" },
   { value: "portrait", label: "Portrait" },
@@ -31,19 +28,13 @@ export interface ToolbarProps {
   onAddImage: (file: File) => void;
   uploading: boolean;
   uploadError: string | null;
-  /** Current global tile size, and how to change it. */
+  /**
+   * The list-wide tile size, which every row without an override renders at.
+   * Per-tier overrides live in `TierControls`, beside the rest of what acts on
+   * one tier.
+   */
   tileSize: number;
   onTileSize: (size: number) => void;
-  /**
-   * Per-row override. `null` clears it, returning the row to `tileSize`.
-   *
-   * The agreed shape for tile scaling was "a toolbar control **plus** a
-   * per-row override", and only the global half shipped. Both live on one
-   * slider here rather than two: which one it drives is a choice the user
-   * makes in the selector beside it, and a second slider that looked
-   * identical and meant something else is how the two get confused.
-   */
-  onRowTileSize: (rowId: string, size: number | null) => void;
   onTileAspect: (aspect: TileAspect) => void;
   /** Export handlers. Null while the canvas has not loaded and cannot snapshot. */
   onExportImage: ((format: "png" | "jpg") => void) | null;
@@ -55,11 +46,11 @@ export interface ToolbarProps {
 }
 
 /**
- * Plain DOM chrome beside the Skia board.
+ * Plain DOM chrome beside the Skia board, for everything that acts on the list
+ * as a whole. What acts on one tier lives in `TierControls`.
  *
- * Deliberately not drawn on the canvas: Skia cannot take text input, and an
- * inline editor overlaid on a tile is its own piece of UI work with its own
- * failure modes. Inline row-label renaming is deferred for the same reason.
+ * Not drawn on the canvas: Skia takes no text input, so every field here would
+ * otherwise be a DOM overlay tracking a canvas rectangle.
  */
 export function Toolbar({
   session,
@@ -73,7 +64,6 @@ export function Toolbar({
   uploadError,
   tileSize,
   onTileSize,
-  onRowTileSize,
   onTileAspect,
   onExportImage,
   onExportJson,
@@ -83,17 +73,6 @@ export function Toolbar({
   shareError,
 }: ToolbarProps) {
   const [draft, setDraft] = useState("");
-  /** Which row the size slider drives, or `GLOBAL` for `display.tileSize`. */
-  const [sizeTarget, setSizeTarget] = useState<string>(GLOBAL);
-
-  const rows = [...session.doc.rows].sort((a, b) => a.order - b.order);
-  // A row can be removed while it is selected. Falling back to the global
-  // target keeps the slider driving something real rather than emitting
-  // actions against an id the document no longer has, which the reducer would
-  // silently ignore — a slider that moves and changes nothing.
-  const targetRow = rows.find((r) => r.id === sizeTarget) ?? null;
-  const effectiveTarget = targetRow ? sizeTarget : GLOBAL;
-  const sliderValue = targetRow ? (targetRow.tileSizeOverride ?? tileSize) : tileSize;
 
   function submitItem(event: FormEvent) {
     event.preventDefault();
@@ -150,21 +129,6 @@ export function Toolbar({
 
       <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#888" }}>
         Tile
-        <select
-          aria-label="Tile size applies to"
-          data-testid="tile-size-target"
-          value={effectiveTarget}
-          onChange={(event) => setSizeTarget(event.target.value)}
-          style={field}
-        >
-          <option value={GLOBAL}>All rows</option>
-          {rows.map((row) => (
-            <option key={row.id} value={row.id}>
-              {row.label || "(unnamed)"}
-              {row.tileSizeOverride === undefined ? "" : " ✓"}
-            </option>
-          ))}
-        </select>
         <input
           aria-label="Tile size"
           data-testid="tile-size"
@@ -172,24 +136,9 @@ export function Toolbar({
           min={48}
           max={200}
           step={4}
-          value={sliderValue}
-          onChange={(event) => {
-            const size = Number(event.target.value);
-            if (targetRow) onRowTileSize(targetRow.id, size);
-            else onTileSize(size);
-          }}
+          value={tileSize}
+          onChange={(event) => onTileSize(Number(event.target.value))}
         />
-        {targetRow && targetRow.tileSizeOverride !== undefined ? (
-          <button
-            type="button"
-            data-testid="tile-size-reset"
-            title="Use the list's tile size for this row"
-            onClick={() => onRowTileSize(targetRow.id, null)}
-            style={button(false)}
-          >
-            Reset
-          </button>
-        ) : null}
       </label>
 
       <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#888" }}>
@@ -312,11 +261,11 @@ interface Readout {
 /**
  * The one place the connection and the save state are folded together.
  *
- * `conflict` is the only state that means the user's work is *not going to be*
- * saved — 2D surfaces a conflict and stops writing, and nothing currently
- * clears it — so it gets a treatment nothing else has. `disconnected` is the
- * other honest failure to say out loud, and it is the state this route is
- * normally in, because no API has ever run against a real database here.
+ * `conflict` is the only state meaning the user's work is *not going to be*
+ * saved: a conflicted session stops writing and nothing clears it. That earns
+ * a treatment nothing else has. `disconnected` is the other failure worth
+ * saying out loud, and it is the normal state of this route when no API is
+ * configured.
  */
 function saveReadout(session: EditorSession, connection: Connection): Readout {
   if (connection.state === "disconnected") {

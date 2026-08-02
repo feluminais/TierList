@@ -44,17 +44,17 @@ export function canRedo(history: History): boolean {
  *
  * Restoring a snapshot verbatim would let one revision number name two
  * different documents. The API updates a row only where
- * `revision = expectedRevision` (services/api/src/repository.ts), so a second
- * device still holding the earlier revision could PATCH straight over this
- * one and the server would accept it — losing the write with no conflict
- * reported. Undo therefore looks like every other edit: a new revision.
+ * `revision = expectedRevision`, so a second device still holding the earlier
+ * revision could write straight over this one and the server would accept it,
+ * losing the write with no conflict reported. Undo therefore looks like every
+ * other edit: a new revision.
  *
  * Everything else comes from the snapshot, including `id`, `createdAt`,
- * `schemaVersion` and `templateId`. That is sound because no action can change
- * them: `meta/set` is the only action that writes top-level fields at all, and
- * its patch type admits only `title`, `description`, `categoryId` and `tags`.
- * So for any document reachable from the snapshot by reducing actions, those
- * fields are identical in both, and copying either is the same thing.
+ * `schemaVersion` and `templateId`. That is sound because no action changes
+ * them: `meta/set` is the only action that writes top-level fields, and its
+ * patch admits only `title`, `description`, `categoryId` and `tags`. For any
+ * document reachable from the snapshot by reducing actions those fields are
+ * identical in both, so copying either is the same thing.
  */
 function restore(snapshot: TierList, current: TierList, now: string): TierList {
   return { ...snapshot, revision: current.revision + 1, updatedAt: now };
@@ -202,6 +202,12 @@ export function mergeKeyFor(action: TierListAction): string | null {
       // preceded it, one undo would jump back past both and the size the user
       // had just dialled in would be unreachable.
       return action.tileSize === null ? null : `row/tileSize:${action.rowId}`;
+    case "display/setUniformTileSize":
+      // Dragged on the same control as `row/setTileSize`, but a *different*
+      // step: the two do different things to the document, so a drag that
+      // crosses between them must not collapse into one undo. Keyed
+      // separately, which is enough to keep them apart.
+      return "display/uniformTileSize";
     default:
       return null;
   }

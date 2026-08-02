@@ -1,8 +1,61 @@
 import { describe, expect, it } from "vitest";
-import { simplifyPoints, strokeFromPoints, toSourcePoint, toTilePoint } from "../src/strokes";
+import {
+  simplifyPoints,
+  strokeFromPoints,
+  strokeWidthInTile,
+  toSourcePoint,
+  toTilePoint,
+} from "../src/strokes";
 
 const TILE = { x: 100, y: 50, width: 200, height: 200 };
 const CROP = { x: 0.25, y: 0.25, w: 0.5, h: 0.5 };
+
+/**
+ * A stroke's width is stored in the same space as its points, so it has to
+ * convert by the same scale they do. These assertions are written against
+ * `toTilePoint` rather than against hand-computed pixel values, so the two
+ * cannot drift into disagreeing about what that scale is.
+ */
+describe("strokeWidthInTile", () => {
+  /** How many tile pixels one whole unit of source width spans, per toTilePoint. */
+  const scaleOf = (tile: typeof TILE, crop: typeof CROP) =>
+    toTilePoint({ x: crop.x + 1, y: crop.y }, tile, crop).x -
+    toTilePoint({ x: crop.x, y: crop.y }, tile, crop).x;
+
+  it("converts by the same scale the points do", () => {
+    expect(strokeWidthInTile(0.02, TILE, CROP)).toBeCloseTo(0.02 * scaleOf(TILE, CROP), 10);
+  });
+
+  it("keeps a stroke's proportions across two tile sizes", () => {
+    const small = { x: 0, y: 0, width: 96, height: 96 };
+    const large = { x: 0, y: 0, width: 600, height: 600 };
+    const ratio =
+      strokeWidthInTile(0.02, large, CROP) / strokeWidthInTile(0.02, small, CROP);
+    expect(ratio).toBeCloseTo(600 / 96, 10);
+  });
+
+  it("thickens with the crop as a zoom magnifies the source", () => {
+    const wide = { x: 0, y: 0, w: 1, h: 1 };
+    const zoomed = { x: 0.25, y: 0.25, w: 0.5, h: 0.5 };
+    expect(strokeWidthInTile(0.02, TILE, zoomed)).toBeCloseTo(
+      strokeWidthInTile(0.02, TILE, wide) * 2,
+      10,
+    );
+  });
+
+  // A stroke thinner than a subpixel reads as missing data rather than as a
+  // fine line, so the conversion has a floor instead of a limit at zero.
+  it("never returns a width that would draw nothing", () => {
+    expect(strokeWidthInTile(1e-12, TILE, { x: 0, y: 0, w: 1, h: 1 })).toBeGreaterThan(0);
+  });
+
+  it("falls back to the floor for a degenerate tile, crop or width", () => {
+    const floor = strokeWidthInTile(1e-12, TILE, { x: 0, y: 0, w: 1, h: 1 });
+    expect(strokeWidthInTile(0.02, { ...TILE, width: 0 }, CROP)).toBe(floor);
+    expect(strokeWidthInTile(0.02, TILE, { x: 0, y: 0, w: 0, h: 1 })).toBe(floor);
+    expect(strokeWidthInTile(0, TILE, CROP)).toBe(floor);
+  });
+});
 
 describe("toSourcePoint", () => {
   // Strokes are stored against the *source image*, not the tile and not the

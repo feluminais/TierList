@@ -94,16 +94,24 @@ export default function Home() {
   );
 }
 
-/** A throwaway document so there is something to look at. Milestone 2D loads a real one. */
+/**
+ * A local document with something in it, so the board has tiles to drag.
+ *
+ * This screen loads and saves nothing; the chrome that would is web-only. Row
+ * ids are read back off the document rather than written out, because
+ * `createTierList` derives them from the list id — a hard-coded one that stops
+ * matching fails silently, leaving every item in the tray with no error.
+ */
 function sampleDoc(): TierList {
   const now = "2026-08-01T12:00:00.000Z";
   let doc = createTierList({ id: "preview", now });
+  const rows = doc.rows.map((r) => r.id);
   const labels = ["Ramen", "Udon", "Soba", "Pho", "Laksa", "Bun bo Hue"];
   labels.forEach((label, i) => {
     doc = reduce(doc, { type: "item/addText", id: `i${i}`, label }, now);
   });
-  doc = reduce(doc, { type: "placement/place", itemId: "i0", rowId: "preview-row-0", index: 0 }, now);
-  doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: "preview-row-0", index: 1 }, now);
-  doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: "preview-row-1", index: 0 }, now);
+  doc = reduce(doc, { type: "placement/place", itemId: "i0", rowId: rows[0]!, index: 0 }, now);
+  doc = reduce(doc, { type: "placement/place", itemId: "i1", rowId: rows[0]!, index: 1 }, now);
+  doc = reduce(doc, { type: "placement/place", itemId: "i2", rowId: rows[1]!, index: 0 }, now);
   return doc;
 }

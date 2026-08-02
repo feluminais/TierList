@@ -90,6 +90,72 @@ describe("PUT /lists/:id", () => {
   });
 });
 
+/**
+ * Several document fields are projected into typed database columns. A value
+ * of the wrong shape is a client error, and has to be answered as one — a
+ * server error is the signal reserved for this service actually being broken,
+ * and blunting it would hide a real outage.
+ *
+ * The cases are the ones that reach a column: the two timestamps, the title,
+ * and the revision. Structural rules are covered exhaustively in @tl/core.
+ */
+describe("write routes: malformed documents", () => {
+  const cases: { name: string; patch: Record<string, unknown> }[] = [
+    { name: "a createdAt that is not a date", patch: { createdAt: "not-a-date" } },
+    { name: "an updatedAt that is not a date", patch: { updatedAt: "" } },
+    { name: "a title that is not a string", patch: { title: { evil: true } } },
+    { name: "a revision that is not a number", patch: { revision: "zero" } },
+    { name: "rows that are not an array", patch: { rows: "none" } },
+    { name: "a placement naming no item", patch: { placements: [{ itemId: "ghost", rowId: null, index: 0 }] } },
+  ];
+
+  it.each(cases)("answers 400, not 500, for $name", async ({ patch }) => {
+    const doc = { ...createTierList({ id: "list-1", now: NOW }), ...patch };
+    const res = await app.request("/lists/list-1", {
+      method: "PUT",
+      headers: headers(),
+      body: JSON.stringify({ document: doc }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("names what was wrong, so a client can act on the answer", async () => {
+    const doc = { ...createTierList({ id: "list-1", now: NOW }), createdAt: "not-a-date" };
+    const res = await app.request("/lists/list-1", {
+      method: "PUT",
+      headers: headers(),
+      body: JSON.stringify({ document: doc }),
+    });
+    const body = (await res.json()) as { problems?: string[] };
+    expect(body.problems?.join("; ")).toMatch(/createdAt/);
+  });
+
+  it("stores nothing when it refuses a document", async () => {
+    const doc = { ...createTierList({ id: "list-1", now: NOW }), title: 7 };
+    await app.request("/lists/list-1", {
+      method: "PUT",
+      headers: headers(),
+      body: JSON.stringify({ document: doc }),
+    });
+    expect((await app.request("/lists/list-1")).status).toBe(404);
+  });
+
+  it("answers 400 on PATCH as well as PUT", async () => {
+    const doc = createTierList({ id: "list-1", now: NOW });
+    await put(doc);
+
+    const res = await app.request("/lists/list-1", {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify({
+        document: { ...doc, revision: 1, updatedAt: "whenever" },
+        expectedRevision: 0,
+      }),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("GET /lists/:id", () => {
   it("returns a stored document", async () => {
     const doc = createTierList({ id: "list-1", now: NOW, title: "Ramen" });

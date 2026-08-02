@@ -1,29 +1,30 @@
-# Expo Skia example
+# mobile
 
-Use [`expo-router`](https://docs.expo.dev/router/introduction/) with [`@shopify/react-native-skia`](https://shopify.github.io/react-native-skia/) to build beautiful, high-performance graphics applications across web and native.
+The Expo app. It renders `@tl/editor`'s board inside a scroll container, which is where edge
+autoscroll during a drag is exercised. The chrome, uploads and the edit sheet are web-only.
 
-## Launch your own
+## Running it
 
-[![Launch with Expo](https://github.com/expo/examples/blob/master/.gh-assets/launch.svg?raw=true)](https://launch.expo.dev/?github=https://github.com/expo/examples/tree/master/with-skia)
-
-## 🚀 How to use
-
-```sh
-npx create-expo-app -e with-skia
+```bash
+pnpm --filter mobile start
 ```
 
-- Load Skia components with `React.lazy` to ensure they aren't loaded on the server.
-- Using a custom suspensy component in `components/async-skia.tsx` to suspend the UI on web until the Skia WASM is fetched and loaded. This ensures errors and pending states are handled in React.
-- A postinstall script copies the `canvaskit.wasm` file to the `public` folder for web support. This must be hosted to work on web, use `eas deploy` to push to production.
+`android/` is gitignored build output under Continuous Native Generation. Regenerate it with:
 
-## Deploy
+```bash
+pnpm --filter mobile exec expo prebuild --clean
+```
 
-Deploy on all platforms with Expo Application Services (EAS).
+Do that after any change to `app.json`, a config plugin, or the workspace's `nodeLinker`.
+Autolinking writes absolute dependency paths into the native project, so a stale one builds
+against the previous layout.
 
-- Deploy the website: `npx eas-cli deploy` — [Learn more](https://docs.expo.dev/eas/hosting/get-started/)
-- Deploy on iOS and Android using: `npx eas-cli build` — [Learn more](https://expo.dev/eas)
+A command-line Gradle build needs `ANDROID_HOME` set; Android Studio supplies its own.
 
-## 📝 Notes
+## Constraints
 
-- [Expo Router: Docs](https://docs.expo.dev/router/introduction/)
-- [React Native Skia: Docs](https://shopify.github.io/react-native-skia/)
+- `nodeLinker: hoisted` in `pnpm-workspace.yaml` is required by the native build.
+- The workspace pins `react`, `react-dom`, `react-native` and `@shopify/react-native-skia` to the
+  versions this SDK expects. Keep `package.json` here in step when bumping the SDK.
+- `com.anonymous.mobile` is a placeholder package name. It has to change before any store
+  submission, and changing it afterwards breaks in-place upgrades.

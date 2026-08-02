@@ -58,6 +58,16 @@ export interface Client {
 export function createClient(options: ClientOptions): Client {
   const base = options.baseUrl.replace(/\/+$/, "");
 
+  /**
+   * Every id that goes into a path goes through here.
+   *
+   * Ids are generated rather than typed, so this is a no-op on all of them —
+   * but the failure mode for skipping it is silent rather than loud: a "#"
+   * would truncate the URL into a fragment and a "?" would start a query
+   * string, and the result reaches a renderer with no console to report to.
+   */
+  const segment = (value: string) => encodeURIComponent(value);
+
   async function call(
     path: string,
     init: { method: string; body?: unknown; auth: boolean },
@@ -89,7 +99,7 @@ export function createClient(options: ClientOptions): Client {
     },
 
     async getList(id) {
-      const res = await call(`/lists/${id}`, { method: "GET", auth: false });
+      const res = await call(`/lists/${segment(id)}`, { method: "GET", auth: false });
       if (res.status === 404) return null;
       const body = (await expectOk(res)) as { document: unknown };
       // migrate() decides what a document means, on both sides of the wire.
@@ -97,7 +107,7 @@ export function createClient(options: ClientOptions): Client {
     },
 
     async createList(doc) {
-      const res = await call(`/lists/${doc.id}`, {
+      const res = await call(`/lists/${segment(doc.id)}`, {
         method: "PUT",
         body: { document: doc },
         auth: true,
@@ -106,7 +116,7 @@ export function createClient(options: ClientOptions): Client {
     },
 
     async updateList(doc, expectedRevision) {
-      const res = await call(`/lists/${doc.id}`, {
+      const res = await call(`/lists/${segment(doc.id)}`, {
         method: "PATCH",
         body: { document: doc, expectedRevision },
         auth: true,
@@ -129,23 +139,20 @@ export function createClient(options: ClientOptions): Client {
       const res = await options.fetch(`${base}/assets`, {
         method: "POST",
         headers,
-        // Cast needed, and to `any` rather than `BodyInit` specifically:
-        // `BodyInit` isn't even an ambient name in this package's own
-        // DOM-less tsconfig (its `RequestInit` comes from @types/node's
-        // undici shim instead), while a consumer like apps/web sees the
-        // overloaded union of the DOM and @types/node declarations and
-        // rejects a raw Uint8Array against *that* merged type (see
-        // docs/superpowers/STATE.md for the underlying tsconfig gap). No
-        // single named type satisfies both compilation contexts. Every
-        // real fetch implementation (browser, RN, Node) accepts a
-        // Uint8Array body at runtime; only the declared types disagree.
+        // Cast to `any` rather than to a named body type. `BodyInit` is not an
+        // ambient name in this package's DOM-less tsconfig, where `fetch`
+        // comes from Node's types, while a consumer compiled with the DOM lib
+        // sees the overloaded union of both declarations and rejects a raw
+        // Uint8Array against that. No single named type satisfies both
+        // compilation contexts. Every real fetch implementation accepts a
+        // Uint8Array body; only the declarations disagree.
         body: bytes as any,
       });
       return (await expectOk(res)) as AssetResponse;
     },
 
     async shareList(listId, ogAssetId) {
-      const res = await call(`/lists/${encodeURIComponent(listId)}/share`, {
+      const res = await call(`/lists/${segment(listId)}/share`, {
         method: "POST",
         body: ogAssetId === undefined ? {} : { ogAssetId },
         auth: true,
@@ -154,7 +161,7 @@ export function createClient(options: ClientOptions): Client {
     },
 
     async getShare(code) {
-      const res = await call(`/shares/${encodeURIComponent(code)}`, {
+      const res = await call(`/shares/${segment(code)}`, {
         method: "GET",
         auth: false,
       });
@@ -175,13 +182,7 @@ export function createClient(options: ClientOptions): Client {
     },
 
     assetUrl(id) {
-      // Ids are server-generated UUIDs (routes.ts uses randomUUID()), so
-      // encoding is a no-op on every real id. It's kept anyway because the
-      // failure mode for skipping it is silent, not loud: a stray "#" would
-      // truncate the URL into a fragment and a "?" would start a query
-      // string, and the string goes straight into Skia.Data.fromURI in the
-      // renderer, which has no console to report a malformed request to.
-      return `${base}/assets/${encodeURIComponent(id)}`;
+      return `${base}/assets/${segment(id)}`;
     },
   };
 }

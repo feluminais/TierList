@@ -87,13 +87,12 @@ export function editReduce(state: EditState, event: EditEvent): EditResult {
       return { state: idleEdit(), action: null };
 
     case "penDown": {
-      // A second finger touching down mid-stroke (no intervening `penUp`) is
-      // not rejected: this machine tracks one logical stroke, and the caller
-      // is responsible for which pointer it feeds in. Starting a fresh stroke
-      // silently abandons whatever was captured for the first — there is no
-      // event to commit it against — which is pinned behaviour, not an
-      // accident, so a two-finger touch loses the earlier points rather than
-      // corrupting a merged stroke or throwing.
+      // A second pen-down with no intervening `penUp` is not rejected: this
+      // machine tracks one logical stroke and the caller decides which pointer
+      // it feeds in. Starting a fresh stroke abandons whatever was captured
+      // for the first, there being no event to commit it against. A
+      // two-finger touch therefore loses the earlier points rather than
+      // merging them into one stroke or throwing.
       const start = toSourcePoint(event.at, event.context.tile, event.context.edit.crop);
       return {
         state: {

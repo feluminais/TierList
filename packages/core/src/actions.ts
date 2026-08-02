@@ -12,9 +12,9 @@ export type TierListAction =
   | { type: "row/remove"; rowId: string }
   /**
    * Per-row tile size. `null` clears the override, returning the row to
-   * `display.tileSize` — deliberately a value of this action rather than a
-   * separate `row/clearTileSize`, so a control that can both set and clear has
-   * one action to emit and the reducer has one branch to keep correct.
+   * `display.tileSize` — a value of this action rather than a separate
+   * `row/clearTileSize`, so a control that both sets and clears emits one
+   * action and the reducer keeps one branch correct.
    */
   | { type: "row/setTileSize"; rowId: string; tileSize: number | null }
   | { type: "row/reorder"; rowId: string; toIndex: number }
@@ -25,15 +25,14 @@ export type TierListAction =
       assetId: string;
       label?: string;
       /**
-       * The crop to store, computed by the caller (usually aspect-locked to
-       * the tile via `defaultCropFor`/`aspectRatioFor` in `@tl/editor-core`).
-       * Omitted when the caller has no source size to compute one from —
+       * The crop to store, computed by the caller — usually aspect-locked to
+       * the tile via `defaultCropFor`/`aspectRatioFor` in `@tl/editor-core`.
+       * Omitted when the caller has no source size to compute one from, and
        * `defaultImageEdit()` then supplies a full-frame fallback so the
-       * document is still valid, just uncropped.
+       * document is valid, just uncropped.
        *
-       * `@tl/core` deliberately does not compute this itself: doing so would
-       * mean importing tile geometry from `@tl/editor-core`, and this package
-       * stays the pure document model with no knowledge of tiles.
+       * This package does not compute it: doing so would mean importing tile
+       * geometry, and the document model knows nothing about tiles.
        */
       edit?: ImageEdit;
     }
@@ -49,6 +48,18 @@ export type TierListAction =
     }
   | { type: "placement/unplace"; itemId: string }
   | { type: "display/set"; patch: Partial<DisplaySettings> }
+  /**
+   * Set the list-wide tile size *and* drop every per-row override, so every
+   * tier ends up the same size.
+   *
+   * One action rather than a `display/set` followed by a clear per row,
+   * because those are one user intention: a run of them would be a run of undo
+   * steps, revisions and saves for a single drag of a single control. The
+   * override is removed rather than rewritten to the new value — a row with no
+   * override *follows* the list-wide size, so equal tiers stay equal when the
+   * list-wide size next changes.
+   */
+  | { type: "display/setUniformTileSize"; tileSize: number }
   | {
       type: "meta/set";
       patch: Partial<

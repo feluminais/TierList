@@ -1,20 +1,40 @@
 /**
- * 2 — the tray became an ordered location. Schema 1 wrote every tray placement
- * at `index: 0`, so the tray had no order to preserve.
+ * The document schema this package reads and writes.
+ *
+ * 2 — the tray is an ordered location, so every location's placement indices
+ *     are contiguous.
+ * 3 — `Stroke.width` is a fraction of the source image's width rather than a
+ *     pixel count, so a stroke keeps its proportions at any tile size.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export type TileAspect = "square" | "portrait" | "landscape";
 export type Density = "compact" | "normal" | "roomy";
 export type ItemKind = "image" | "text";
 
-/** A freehand stroke. Points are normalized 0..1 relative to their surface. */
+/**
+ * A freehand stroke.
+ *
+ * Both the geometry and the thickness are stored against the source image, not
+ * against any surface that draws it: `points` are normalized 0..1 of the
+ * source, and `width` is a fraction of the source's width. A renderer converts
+ * both with the same scale, so a stroke keeps its proportions on a small board
+ * tile, on a magnified edit surface, and at any crop zoom.
+ */
 export interface Stroke {
   id: string;
   points: number[]; // flat [x0, y0, x1, y1, ...]
   color: string;
+  /** Fraction of the source image's width. See `strokeWidthInTile`. */
   width: number;
 }
+
+/**
+ * The thickness a freshly drawn stroke is given, as a fraction of the source
+ * width. Reads as a fine pen on a board tile and scales up on a magnified edit
+ * surface.
+ */
+export const DEFAULT_STROKE_WIDTH = 0.02;
 
 /** Non-destructive edits applied to an item's source image. */
 export interface ImageEdit {
@@ -48,18 +68,13 @@ export interface Item {
  * an ordered location like any row, not a bag.
  *
  * Invariant: within each location — every row, and the tray — the `index`
- * values are contiguous `0..n-1`, with no holes and no duplicates. Consumers
- * may therefore read `index` as a position and lay a location out by it
- * directly, not merely sort by it.
+ * values are contiguous `0..n-1`, with no holes and no duplicates, and one
+ * item has at most one placement. Consumers may therefore read `index` as a
+ * position and lay a location out by it directly, not merely sort by it.
  *
- * `reduce()` maintains that invariant but never checks it: @tl/core is a pure
- * model, and validating an untrusted document is a boundary concern. Its home
- * is `migrate()`, which `services/api` already treats as the sole authority on
- * what a valid document is. The schema 1 -> 2 step establishes this invariant
- * for every document it converts, but that is a one-off repair at a version
- * boundary rather than a validator: a document that arrives already at the
- * current version and already holed stays holed — the reducer trusts its
- * input.
+ * `reduce()` maintains the invariant but never checks it: this package is a
+ * pure model, and checking untrusted input is a boundary concern. That
+ * boundary is `validateDocument()`, which every write route runs.
  */
 export interface Placement {
   itemId: string;
@@ -76,11 +91,9 @@ export interface DisplaySettings {
   /**
    * Whether an item's own label is drawn on its tile.
    *
-   * Deliberately *not* about the row label column: `labelWidth: 0` already
-   * collapses that, so a second flag meaning the same thing would be
-   * redundant. Because the label is drawn on the tile rather than beneath it,
-   * this changes no geometry — `layoutBoard` correctly ignores it, and the
-   * renderer is the only thing that reads it.
+   * Not about the row label column, which `labelWidth: 0` collapses. The label
+   * is drawn on the tile rather than beneath it, so this changes no geometry:
+   * `layoutBoard` ignores it and only the renderer reads it.
    */
   showLabels: boolean;
 }
@@ -99,10 +112,10 @@ export interface TierList {
   boardAnnotations: Stroke[];
   templateId?: string;
   /**
-   * The template's `revision` at the moment this fill was started. Records the
-   * tier scale the fill was ranked against, which cannot be reconstructed later
-   * because both the fill's rows and the template's rows can change afterwards.
-   * Compare must treat differing values as a condition to surface, not average over.
+   * The template's `revision` when this fill was started, recording the tier
+   * scale it was ranked against. Both sides can change afterwards, so the scale
+   * cannot be reconstructed later. Compare surfaces a difference between two
+   * fills' values rather than averaging over it.
    */
   templateRevision?: number;
   authorId?: string;

@@ -55,17 +55,15 @@ export type DragEvent =
        * This input can begin a drag on movement alone, without waiting out
        * `DRAG_HOLD_MS`.
        *
-       * Named for what it means, not for a device, because this module is
-       * shared with the Android app and must stay platform-agnostic — the
-       * same reason it takes `time` from its caller instead of reading a
-       * clock. A mouse is the caller that sets this: its wheel scrolls, so
-       * press-and-drag can never be mistaken for a scroll the way a touch
-       * drag can, and the 250ms wait that protects a touch screen would only
-       * read as a broken click here.
+       * Named for what it means rather than for a device, because this module
+       * is shared with the Android app and stays platform-agnostic — the same
+       * reason it takes `time` from its caller instead of reading a clock. A
+       * mouse is the caller that sets it: a wheel scrolls, so press-and-drag
+       * cannot be mistaken for a scroll the way a touch drag can, and the hold
+       * that protects a touch screen would only read as a broken click.
        *
-       * Defaults to false (see the `down` handling in `dragReduce`), so a
-       * caller that never sets it — every existing one — keeps exactly the
-       * hold-then-slop behaviour it always had.
+       * Defaults to false, so a caller that never sets it keeps the
+       * hold-then-slop behaviour.
        */
       immediate?: boolean;
     }
@@ -82,18 +80,15 @@ export interface DragResult {
    * True when the caller should hand the gesture back to the scroller.
    *
    * **Nothing reads this, and that is a conclusion rather than an omission.**
-   * Both branches that set it — slop exceeded during a pending press, and an
-   * item that went away under the finger before the hold completed — also
-   * return the machine to `idle`, and the one place a caller could act on it,
-   * `onResponderTerminationRequest`, already answers from the phase. Reading
-   * the field as well would be a second source of the same truth, free to
-   * disagree with the first.
+   * Both branches that set it also return the machine to `idle`, and the one
+   * place a caller could act on it — `onResponderTerminationRequest` —
+   * already answers from the phase. Reading the field as well would be a
+   * second source of one truth, free to disagree with the first.
    *
    * It stays because neither platform lets a responder actively hand a gesture
-   * back, so there is currently nothing else to do with the knowledge: Android's
-   * `ScrollView` takes a gesture by intercepting it and a browser takes it by
-   * cancelling, and in both cases the machine is told afterwards. If a caller
-   * ever gains a way to yield on purpose, this is the signal to yield on.
+   * back: a scroller takes one by intercepting or cancelling, and the machine
+   * is told afterwards. If a caller ever gains a way to yield on purpose, this
+   * is the signal to yield on.
    */
   releaseToScroll: boolean;
   /** Set when the gesture turned out to be a tap rather than a drag. */
@@ -136,10 +131,9 @@ function promote(
   const found = findTile(layout, state.itemId);
 
   // The item went away under the finger. There is nothing to pick up, and
-  // dragging a phantom would end in a `placement/place` for an item the
-  // document no longer has — which the reducer does not refuse. Hand the
-  // gesture to the scroller instead: the finger is still down and this
-  // machine is not taking it.
+  // dragging a phantom would end in a placement for an item the document no
+  // longer holds. Hand the gesture to the scroller instead: the finger is
+  // still down and this machine is not taking it.
   if (!found) return result(idleDrag(), { releaseToScroll: true });
 
   return result({
@@ -196,10 +190,10 @@ export function dragReduce(state: DragState, event: DragEvent): DragResult {
 
       // Slop is judged before the clock, and against the press rather than
       // the previous sample. A finger that has travelled this far is
-      // scrolling, and elapsed time is no evidence to the contrary: it says
-      // only that this event is late, not that the finger was ever still.
-      // A janky frame on a mid-range Android can swallow every move of a
-      // flick and deliver the first one after the hold window has passed.
+      // scrolling, and elapsed time is no evidence to the contrary — it says
+      // only that this event is late, not that the finger was ever still. A
+      // dropped frame can swallow every move of a flick and deliver the first
+      // one after the hold window has passed.
       if (distance(event.at.point, state.origin.point) > DRAG_SLOP_PX) {
         // Unless this press said up front that movement alone may start a
         // drag: a mouse has no scroll to steal, so what would cancel a touch

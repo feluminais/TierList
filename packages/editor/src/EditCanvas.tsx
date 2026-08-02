@@ -6,12 +6,15 @@ import { StrokeLayer } from "./StrokeLayer";
 import { BOARD_BACKGROUND, tileFill } from "./theme";
 import { useImageCache } from "./useImageCache";
 
-/** A stroke not yet committed to the document, already in this canvas's own
- *  coordinate space — see `EditSheet`'s comment on why that mapping happens
- *  before this component ever sees the points. */
+/**
+ * A stroke not yet committed to the document, already in this canvas's own
+ * coordinate space — points and width both, converted by the surface that
+ * owns the gesture before this component sees them.
+ */
 export interface LiveStroke {
   points: number[]; // flat [x0, y0, x1, y1, …], canvas-space
   color: string;
+  /** Canvas pixels. */
   width: number;
 }
 

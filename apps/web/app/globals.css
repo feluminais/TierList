@@ -59,3 +59,57 @@ body {
     }
   }
 }
+
+/*
+ * The tier panel's entrance.
+ *
+ * It emerges from behind the tier it belongs to: it starts tucked under the
+ * colour cell, at the cell's own edge, and slides out to its resting place.
+ * Two keyframes rather than one, because a panel opening to the right has to
+ * travel the other way to look like it came from the same place.
+ *
+ * `fill-mode` is left at `none`, as the tile button's is, so the settled state
+ * is the element's own style. Where animations do not run, the panel is simply
+ * open rather than stuck off to one side.
+ */
+@keyframes tl-tier-panel-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(60px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes tl-tier-panel-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(-60px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes tl-tier-panel-in-left {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes tl-tier-panel-in-right {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}

@@ -14,16 +14,13 @@ import {
  * future users table can adopt tokens (by gaining a nullable user_id here)
  * without migrating a single document.
  */
-export const deviceTokens = pgTable(
-  "device_tokens",
-  {
-    id: text("id").primaryKey(),
-    tokenHash: text("token_hash").notNull().unique(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
-    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull(),
-  },
-  (t) => [index("device_tokens_hash_idx").on(t.tokenHash)],
-);
+export const deviceTokens = pgTable("device_tokens", {
+  id: text("id").primaryKey(),
+  // Unique, which is also the index every lookup uses: a token is resolved to
+  // an owner by its hash and never by anything else.
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+});
 
 export type DeviceTokenRow = typeof deviceTokens.$inferSelect;
 export type NewDeviceTokenRow = typeof deviceTokens.$inferInsert;

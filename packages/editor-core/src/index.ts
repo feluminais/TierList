@@ -6,6 +6,7 @@ export * from "./imageedit";
 export * from "./layout";
 export * from "./hit";
 export * from "./drag";
+export * from "./rowdrag";
 export * from "./history";
 export * from "./autoscroll";
 export * from "./preview";

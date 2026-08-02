@@ -1,5 +1,9 @@
 import type { Item } from "@tl/core";
-import { toTilePoint, type Rect as GeometryRect } from "@tl/editor-core";
+import {
+  strokeWidthInTile,
+  toTilePoint,
+  type Rect as GeometryRect,
+} from "@tl/editor-core";
 import { Path, Skia } from "@shopify/react-native-skia";
 import React from "react";
 
@@ -7,15 +11,15 @@ import React from "react";
  * An item's committed strokes, mapped from source-normalized coordinates
  * into `dest` (a tile's own space) via `toTilePoint`.
  *
- * Shared between `EditCanvas` (one tile blown up to fill a sheet) and
- * `TierBoard` (every tile on the board), so the mapping and the `Path`
- * construction cannot drift between the two call sites the way they did
- * before this file existed: strokes must render whenever an item has any,
- * regardless of whether it has an image or that image is ready — a text
- * tile, or an image tile still loading or that failed to decode, still owns
- * whatever was drawn on it. Callers are responsible for clipping to the
- * tile; this component draws unclipped so a stroke from before a tighter
- * crop still exists to be clipped by whoever wraps it.
+ * Shared between `EditCanvas`, which blows one tile up to fill a sheet, and
+ * `TierBoard`, which draws every tile on the board, so the mapping and the
+ * `Path` construction cannot drift between the two.
+ *
+ * Rendered whenever an item has strokes, regardless of whether it has an image
+ * or whether that image is ready: a text tile, or an image tile still loading
+ * or failed to decode, still owns whatever was drawn on it. Callers clip to
+ * the tile; this draws unclipped, so a stroke made before a tighter crop still
+ * exists for whoever wraps it to clip away.
  */
 export function StrokeLayer({ item, dest }: { item: Item; dest: GeometryRect }) {
   return (
@@ -37,7 +41,7 @@ export function StrokeLayer({ item, dest }: { item: Item; dest: GeometryRect }) 
             path={path}
             color={stroke.color}
             style="stroke"
-            strokeWidth={stroke.width}
+            strokeWidth={strokeWidthInTile(stroke.width, dest, item.edit.crop)}
             strokeCap="round"
             strokeJoin="round"
           />

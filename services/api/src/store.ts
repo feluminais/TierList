@@ -10,8 +10,8 @@ export interface StoredObject {
  * Where uploaded bytes live. Two adapters implement it — memory for tests, the
  * filesystem for a dev server — and routes are typed against this interface and
  * never against an adapter, so a difference between them shows up as a type
- * error rather than at runtime. An S3/R2 adapter is the same methods and
- * belongs with 1E, when there is somewhere to deploy it to.
+ * error rather than at runtime. An S3-compatible adapter is the same two
+ * methods, and belongs with the deploy.
  */
 export interface ObjectStore {
   put: (key: string, bytes: Uint8Array, contentType: string) => Promise<void>;
@@ -27,23 +27,17 @@ export interface ObjectStore {
  * treats them as separators, which would let a key smuggle extra path
  * segments straight past this regex.
  *
- * Lowercase only, uppercase rejected outright. This was not a theoretical
- * worry: `put("Abc", …)` then `get("abc")` returns null on the memory
- * adapter (a case-sensitive `Map`) but returns the object on the file
- * adapter, observed directly on Windows/NTFS —
+ * Lowercase only, uppercase rejected outright. The adapters disagree on case
+ * otherwise: a `Map` is case-sensitive and a filesystem may not be, so one key
+ * written and a differently-cased key read resolves on one adapter and misses
+ * on the other. Folding case inside each adapter would fix it twice,
+ * separately, which stays in sync only by coincidence; rejecting uppercase at
+ * the boundary means the two can only agree.
  *
- *   memory  put("Abc") -> get("Abc")=FOUND  get("abc")=null
- *   file    put("Abc") -> get("Abc")=FOUND  get("abc")=FOUND
- *
- * — because NTFS folds case and a case-sensitive Map does not. Folding case
- * inside each adapter instead would fix it twice, separately, which is
- * exactly the kind of thing that stays in sync only by coincidence.
- * Rejecting uppercase at the boundary means the two adapters can only ever
- * agree, and it costs nothing today: every key this service builds is
- * `assets/${randomUUID()}`, and `randomUUID()` emits lowercase hex. A future
- * key scheme that wants mixed case (base64url, say) will fail loudly here
- * instead of diverging silently between dev and production — read that as a
- * prompt to reconsider this constraint, not a bug to route around.
+ * It costs nothing: every key this service builds is `assets/${randomUUID()}`,
+ * which is lowercase hex. A future key scheme wanting mixed case fails loudly
+ * here rather than diverging between environments — read that as a prompt to
+ * reconsider the scheme, not a bug to route around.
  */
 const SAFE_KEY = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*$/;
 

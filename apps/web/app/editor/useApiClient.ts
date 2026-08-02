@@ -1,6 +1,6 @@
 "use client";
 
-import { createClient, type Client } from "@tl/api-client";
+import { ApiError, createClient, type Client } from "@tl/api-client";
 import { useEffect, useRef, useState } from "react";
 
 /**
@@ -69,6 +69,25 @@ export function useApiClient(
 
       try {
         let token = storage?.getItem(TOKEN_STORAGE_KEY) ?? undefined;
+
+        // A stored token can name a device the server has forgotten — the
+        // database was reset, the row was pruned, or (routinely, in
+        // development) the scratch API restarted and its in-memory tokens went
+        // with it. Without this check the token is used anyway, every
+        // authenticated write comes back 401, and `useAutosave` treats that as
+        // a transient failure and retries it forever: the readout says "Save
+        // failed — retrying" and nothing the user can do will clear it,
+        // because the one thing that would — minting a new token — only ever
+        // happened when there was no stored token at all.
+        //
+        // Costs one round trip per page load. Worth it: without it,
+        // `connected` claims something it has not established, and the failure
+        // it hides is unrecoverable rather than merely slow.
+        if (token) {
+          const live = await tokenIsLive(createClient({ baseUrl, token, fetch: doFetch }));
+          if (!live) token = undefined;
+        }
+
         if (!token) {
           const minted = await createClient({
             baseUrl,
@@ -76,7 +95,8 @@ export function useApiClient(
           }).mintToken();
           token = minted.token;
           // Stored before the liveness check on purpose: a token minted and
-          // then dropped is an orphaned row on the server.
+          // then dropped is an orphaned row on the server. Overwrites a
+          // rejected one, which is all the cleanup a dead token needs.
           storage?.setItem(TOKEN_STORAGE_KEY, token);
         }
         if (!alive) return;
@@ -95,6 +115,30 @@ export function useApiClient(
   }, [baseUrl]);
 
   return connection;
+}
+
+/**
+ * Whether the server still recognises this token.
+ *
+ * `listMine` is the probe because it is the cheapest authenticated read the
+ * client has — it touches one indexed column and returns the caller's own
+ * lists, so it cannot fail for a reason that is really about some other
+ * resource.
+ *
+ * **Only a 401 means "not live".** Anything else is rethrown, so a server that
+ * is down or broken surfaces as `failed` rather than being quietly answered
+ * with a freshly minted token — which would orphan every list the old token
+ * owned, permanently, in response to a transient outage. That asymmetry is the
+ * whole reason this is a named function rather than a `catch` returning false.
+ */
+async function tokenIsLive(client: Client): Promise<boolean> {
+  try {
+    await client.listMine();
+    return true;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) return false;
+    throw error;
+  }
 }
 
 /** localStorage can throw on access under some privacy settings. */

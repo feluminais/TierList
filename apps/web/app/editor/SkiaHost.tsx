@@ -1,9 +1,12 @@
 "use client";
 
-import { createTierList, reduce, type TierList, type TierListAction } from "@tl/core";
+import type { AssetResponse } from "@tl/api-client";
+import { createTierList, defaultImageEdit, reduce, type TierList, type TierListAction } from "@tl/core";
 import {
   applyAction,
+  aspectRatioFor,
   createSession,
+  defaultCropFor,
   redoSession,
   saveFailed,
   saveStarted,
@@ -175,10 +178,29 @@ export default function SkiaHost() {
     [dispatch],
   );
 
-  const onUploaded = useCallback(
-    (assetId: string) => dispatch({ type: "item/addImage", id: newId(), assetId }),
-    [dispatch],
-  );
+  // Reads `display.tileAspect` from the functional `setSession` update rather
+  // than from the `session` this callback closed over: `useAssetUpload` holds
+  // this callback for the lifetime of an upload, which can outlive several
+  // re-renders (a tile-size change, an unrelated edit) between the upload
+  // starting and the server responding. Reading a captured `session` here
+  // would silently lock the crop to whatever aspect was current when the
+  // *upload started*, not when it finished — exactly the stale-read bug this
+  // fix exists to avoid.
+  const onUploaded = useCallback((asset: AssetResponse) => {
+    const id = newId();
+    setSession((current) => {
+      const crop = defaultCropFor(
+        { width: asset.width, height: asset.height },
+        aspectRatioFor(current.doc.display.tileAspect),
+      );
+      const edit = { ...defaultImageEdit(), crop };
+      return applyAction(
+        current,
+        { type: "item/addImage", id, assetId: asset.id, edit },
+        now(),
+      );
+    });
+  }, []);
   const upload = useAssetUpload(client, onUploaded);
   const onAddImage = useCallback((file: File) => void upload.upload(file), [upload]);
 

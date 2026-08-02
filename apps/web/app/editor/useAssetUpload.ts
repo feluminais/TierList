@@ -1,6 +1,6 @@
 "use client";
 
-import type { Client } from "@tl/api-client";
+import type { AssetResponse, Client } from "@tl/api-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface AssetUpload {
@@ -10,15 +10,18 @@ export interface AssetUpload {
 }
 
 /**
- * Turns a picked file into an `assetId`.
+ * Turns a picked file into an uploaded asset.
  *
- * The id is reported through a callback rather than returned, because the
- * caller has to mint the *item* id too and dispatch a single `item/addImage`
- * carrying both — one action, one undo step, one revision.
+ * The whole `AssetResponse` is reported through a callback rather than
+ * returned, because the caller has to mint the *item* id too and dispatch a
+ * single `item/addImage` carrying both — one action, one undo step, one
+ * revision. The full response (not just the id) matters: it carries the
+ * `width`/`height` the server measured, which the caller needs to compute an
+ * aspect-locked crop before that single dispatch.
  */
 export function useAssetUpload(
   client: Client | null,
-  onUploaded: (assetId: string) => void,
+  onUploaded: (asset: AssetResponse) => void,
 ): AssetUpload {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,7 +58,7 @@ export function useAssetUpload(
         // The declared type is a hint only — the server decides what the image
         // really is by reading the bytes, and may correct it.
         const asset = await client.uploadAsset(bytes, file.type || "application/octet-stream");
-        if (mounted.current) onUploaded(asset.id);
+        if (mounted.current) onUploaded(asset);
       } catch (e) {
         if (mounted.current) setError(e instanceof Error ? e.message : String(e));
       } finally {

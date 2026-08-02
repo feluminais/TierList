@@ -63,6 +63,18 @@ export function tileSizeFor(base: number, aspect: TileAspect): Size {
 }
 
 /**
+ * Height ÷ width for a tile aspect — the same convention `defaultCropFor`
+ * (imagefit.ts) documents itself as matching. Exported rather than the raw
+ * `ASPECT_RATIO` map so a caller that needs the number (deciding what crop to
+ * lock an upload to, say) reads it from the one place `layoutBoard` itself
+ * reads it, and the two cannot drift into disagreeing about what "portrait"
+ * means.
+ */
+export function aspectRatioFor(tileAspect: TileAspect): number {
+  return ASPECT_RATIO[tileAspect];
+}
+
+/**
  * How many tiles fit across `available`, given a gap on both outer edges and
  * between every pair. Never returns 0: a board too narrow for one tile still
  * has to render, and a zero column count would divide by zero downstream.

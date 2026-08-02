@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createTierList } from "../src/factory";
+import { createTierList, defaultImageEdit } from "../src/factory";
 import { reduce } from "../src/reduce";
 import type { TierList } from "../src/types";
 
@@ -22,11 +22,23 @@ describe("item/addText and item/addImage", () => {
     expect(doc.placements[0]).toMatchObject({ itemId: "i1", rowId: null });
   });
 
-  it("gives an image item its asset id and a default edit", () => {
+  it("gives an image item its asset id and a default edit when no edit is supplied", () => {
     let doc = createTierList({ id: "list-1", now: NOW });
     doc = reduce(doc, { type: "item/addImage", id: "i1", assetId: "asset-9" }, NOW);
     expect(doc.items[0]).toMatchObject({ kind: "image", assetId: "asset-9" });
+    expect(doc.items[0]!.edit).toEqual(defaultImageEdit());
     expect(doc.items[0]!.edit.zoom).toBe(1);
+  });
+
+  // A caller that knows the source size (SkiaHost, on upload) computes an
+  // aspect-locked crop and hands it in on the same action that creates the
+  // item — one action, one undo step — rather than a follow-up
+  // `item/setEdit`. The reducer must store exactly what it was given.
+  it("stores a supplied edit instead of the default", () => {
+    let doc = createTierList({ id: "list-1", now: NOW });
+    const edit = { ...defaultImageEdit(), crop: { x: 0.1, y: 0, w: 0.8, h: 1 } };
+    doc = reduce(doc, { type: "item/addImage", id: "i1", assetId: "asset-9", edit }, NOW);
+    expect(doc.items[0]!.edit).toEqual(edit);
   });
 
   it("assigns increasing order values", () => {

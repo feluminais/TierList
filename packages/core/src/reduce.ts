@@ -114,7 +114,7 @@ function apply(doc: TierList, action: TierListAction): TierList {
         kind: "image",
         label: action.label,
         assetId: action.assetId,
-        edit: defaultImageEdit(),
+        edit: action.edit ?? defaultImageEdit(),
         order: doc.items.length,
       };
       const placement: Placement = {

@@ -19,7 +19,7 @@ const file = (name = "a.png") =>
   new File([new Uint8Array([1, 2, 3])], name, { type: "image/png" });
 
 describe("useAssetUpload", () => {
-  it("reports the assetId the server chose", async () => {
+  it("reports the whole asset response the server chose, not just the id", async () => {
     const onUploaded = vi.fn();
     const client = fakeClient();
     const { result } = renderHook(() => useAssetUpload(client, onUploaded));
@@ -28,7 +28,15 @@ describe("useAssetUpload", () => {
       await result.current.upload(file());
     });
 
-    expect(onUploaded).toHaveBeenCalledWith("asset-1");
+    // width/height matter to the caller: it needs them to compute an
+    // aspect-locked crop before dispatching item/addImage.
+    expect(onUploaded).toHaveBeenCalledWith({
+      id: "asset-1",
+      contentType: "image/png",
+      width: 10,
+      height: 10,
+      byteSize: 24,
+    });
   });
 
   // The bytes must reach the client, not the File object — the API takes a raw

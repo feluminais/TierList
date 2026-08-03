@@ -1,5 +1,7 @@
 import type { Item, Stroke, TierList } from "@tl/core";
 import {
+  boardStrokePoints,
+  boardStrokeWidth,
   imageDrawRect,
   imagePlacement,
   layoutBoard,
@@ -126,6 +128,36 @@ export function StaticBoard({
 
         <div style={{ ...box(layout.tray.rect), background: BOARD_LINE }} />
         {layout.tray.tiles.map((t, i) => tile(t.itemId, `tray:${t.itemId}:${i}`))}
+
+        {/*
+          Annotations drawn across the whole list, over everything else. One
+          SVG spanning the board rather than one per mark, so the marks share a
+          coordinate space and cost a single element.
+        */}
+        {doc.boardAnnotations.length > 0 ? (
+          <svg
+            viewBox={`0 0 ${BOARD_UNITS} ${layout.contentHeight}`}
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}
+            aria-hidden="true"
+          >
+            {doc.boardAnnotations.map((stroke) => (
+              <polyline
+                key={stroke.id}
+                points={annotationPoints(stroke.points, layout.contentHeight)}
+                fill="none"
+                stroke={stroke.color}
+                strokeWidth={boardStrokeWidth(stroke.width, {
+                  x: 0,
+                  y: 0,
+                  width: BOARD_UNITS,
+                  height: layout.contentHeight,
+                })}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            ))}
+          </svg>
+        ) : null}
       </div>
     </div>
   );
@@ -279,6 +311,21 @@ function strokePoints(stroke: Stroke, dest: Rect, crop: Item["edit"]["crop"]): s
   for (let p = 0; p + 1 < stroke.points.length; p += 2) {
     const point = toTilePoint({ x: stroke.points[p]!, y: stroke.points[p + 1]! }, dest, crop);
     out.push(`${round(point.x)},${round(point.y)}`);
+  }
+  return out.join(" ");
+}
+
+/** A board annotation's points in the SVG's own board-unit coordinates. */
+function annotationPoints(points: number[], contentHeight: number): string {
+  const mapped = boardStrokePoints(points, {
+    x: 0,
+    y: 0,
+    width: BOARD_UNITS,
+    height: contentHeight,
+  });
+  const out: string[] = [];
+  for (let p = 0; p + 1 < mapped.length; p += 2) {
+    out.push(`${round(mapped[p]!)},${round(mapped[p + 1]!)}`);
   }
   return out.join(" ");
 }

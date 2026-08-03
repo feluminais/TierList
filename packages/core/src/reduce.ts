@@ -260,6 +260,21 @@ function apply(doc: TierList, action: TierListAction): TierList {
       };
     }
 
+    case "board/addStroke":
+      return { ...doc, boardAnnotations: [...doc.boardAnnotations, action.stroke] };
+
+    case "board/removeStroke": {
+      const kept = doc.boardAnnotations.filter((s) => s.id !== action.strokeId);
+      // Nothing matched: a genuine no-op, so the same reference goes back and
+      // `reduce()` skips the revision bump.
+      if (kept.length === doc.boardAnnotations.length) return doc;
+      return { ...doc, boardAnnotations: kept };
+    }
+
+    case "board/clearStrokes":
+      if (doc.boardAnnotations.length === 0) return doc;
+      return { ...doc, boardAnnotations: [] };
+
     case "display/set":
       return { ...doc, display: { ...doc.display, ...action.patch } };
 

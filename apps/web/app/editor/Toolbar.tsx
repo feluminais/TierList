@@ -18,6 +18,8 @@ export interface ToolbarProps {
   onExportJson: () => void;
   /** Opens the share dialog. Null while there is no API to share against. */
   onShare: (() => void) | null;
+  /** Puts the pen out for drawing across the whole list. */
+  onAnnotate: () => void;
 }
 
 /**
@@ -37,6 +39,7 @@ export function Toolbar({
   onExportImage,
   onExportJson,
   onShare,
+  onAnnotate,
 }: ToolbarProps) {
   const save = saveReadout(session, connection);
 
@@ -107,6 +110,15 @@ export function Toolbar({
         title="Download the document — the answer to “it's just a picture”"
       >
         JSON
+      </button>
+      <button
+        type="button"
+        data-testid="annotate"
+        onClick={onAnnotate}
+        style={button(false)}
+        title="Draw across the whole list"
+      >
+        Annotate
       </button>
       <button
         type="button"

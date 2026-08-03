@@ -77,6 +77,8 @@ export interface InteractiveBoardProps {
    * until one of them passes a different option.
    */
   layout?: BoardLayout;
+  /** A mark still under the pen, passed straight through to the renderer. */
+  liveAnnotation?: { points: number[]; color: string; width: number } | null;
 }
 
 /**
@@ -105,6 +107,7 @@ export function InteractiveBoard({
   immediateDrag,
   onExporterReady,
   layout: providedLayout,
+  liveAnnotation,
   assetIds = EMPTY_ASSET_IDS,
   assetUrl = emptyAssetUrl,
 }: InteractiveBoardProps) {
@@ -149,6 +152,7 @@ export function InteractiveBoard({
         layout={layout}
         drag={drag}
         images={images}
+        liveAnnotation={liveAnnotation}
         canvasRef={canvasRef}
       />
     </View>

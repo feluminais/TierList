@@ -1,5 +1,7 @@
 import type { Item, TierList } from "@tl/core";
 import {
+  boardStrokePoints,
+  boardStrokeWidth,
   dragPreviewRect,
   imageDrawRect,
   imagePlacement,
@@ -15,7 +17,9 @@ import {
   Fill,
   Group,
   Image,
+  Path,
   Rect,
+  Skia,
   Text,
   rect,
   type CanvasRef,
@@ -60,6 +64,12 @@ export interface TierBoardProps {
    */
   images?: ImageCache;
   /**
+   * A mark still under the pen, in board coordinates. Drawn over everything
+   * and never written to the document until the gesture ends — the same
+   * arrangement `EditCanvas` uses for a tile's live stroke.
+   */
+  liveAnnotation?: { points: number[]; color: string; width: number } | null;
+  /**
    * A handle on the underlying Skia canvas, for `encodeBoardImage`.
    *
    * Passed down rather than exposed through an imperative handle on this
@@ -79,7 +89,25 @@ export interface TierBoardProps {
  * where the caret and the floating tile go is `@tl/editor-core`'s arithmetic,
  * not this file's. `InteractiveBoard` is what turns touches into that state.
  */
-export function TierBoard({ doc, width, layout, drag, images, canvasRef }: TierBoardProps) {
+/** A polyline through flat [x0, y0, x1, y1, …] board coordinates. */
+function linePath(points: number[]) {
+  const path = Skia.Path.Make();
+  for (let p = 0; p + 1 < points.length; p += 2) {
+    if (p === 0) path.moveTo(points[p]!, points[p + 1]!);
+    else path.lineTo(points[p]!, points[p + 1]!);
+  }
+  return path;
+}
+
+export function TierBoard({
+  doc,
+  width,
+  layout,
+  drag,
+  images,
+  liveAnnotation,
+  canvasRef,
+}: TierBoardProps) {
   const board = useMemo(
     () => layout ?? layoutBoard(doc, { width }),
     [layout, doc, width],
@@ -134,6 +162,9 @@ export function TierBoard({ doc, width, layout, drag, images, canvasRef }: TierB
     [board, drag],
   );
   const draggedItem = drag?.phase === "dragging" ? itemsById.get(drag.itemId) : undefined;
+
+  /** The surface board annotations are normalized against. */
+  const boardRect: GeometryRect = { x: 0, y: 0, width, height: board.contentHeight };
 
   /**
    * A tier's letter, centred in its colour cell.
@@ -294,6 +325,35 @@ export function TierBoard({ doc, width, layout, drag, images, canvasRef }: TierB
           width={caret.width}
           height={caret.height}
           color={CARET}
+        />
+      ) : null}
+
+      {/*
+        Board annotations, over everything the board itself drew. They belong
+        to the list as a whole rather than to any tile, so nothing clips them
+        and they are drawn after every tier — which is also what puts them in
+        an export, since that snapshots this canvas.
+      */}
+      {doc.boardAnnotations.map((stroke) => (
+        <Path
+          key={stroke.id}
+          path={linePath(boardStrokePoints(stroke.points, boardRect))}
+          color={stroke.color}
+          style="stroke"
+          strokeWidth={boardStrokeWidth(stroke.width, boardRect)}
+          strokeCap="round"
+          strokeJoin="round"
+        />
+      ))}
+
+      {liveAnnotation && liveAnnotation.points.length >= 4 ? (
+        <Path
+          path={linePath(liveAnnotation.points)}
+          color={liveAnnotation.color}
+          style="stroke"
+          strokeWidth={liveAnnotation.width}
+          strokeCap="round"
+          strokeJoin="round"
         />
       ) : null}
 

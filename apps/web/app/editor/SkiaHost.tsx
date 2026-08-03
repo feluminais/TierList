@@ -30,6 +30,7 @@ import {
   useState,
   type ComponentType,
 } from "react";
+import { AnnotateLayer } from "./AnnotateLayer";
 import { downloadBytes, filenameFor } from "./download";
 import { newId } from "./ids";
 import { EditSheet, type EditCanvasComponent } from "./EditSheet";
@@ -63,6 +64,7 @@ type BoardProps = {
   immediateDrag?: boolean;
   onExporterReady?: (exporter: BoardExporterLike | null) => void;
   layout?: BoardLayout;
+  liveAnnotation?: { points: number[]; color: string; width: number } | null;
   assetIds?: readonly string[];
   assetUrl?: (assetId: string) => string;
 };
@@ -360,6 +362,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
     [],
   );
   const [addingItem, setAddingItem] = useState(false);
+  const [annotating, setAnnotating] = useState(false);
 
   const sharing = useShare(client, listId, session.doc, ogImage, shareUrlFor);
   const [shareOpen, setShareOpen] = useState(false);
@@ -453,6 +456,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
         onExportImage={exporter ? onExportImage : null}
         onExportJson={onExportJson}
         onShare={client ? openShare : null}
+        onAnnotate={() => setAnnotating(true)}
       />
 
       {filling ? <FillBanner placed={progress.placed} total={progress.total} /> : null}
@@ -511,6 +515,37 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
         // so its layer is later in the DOM and therefore above — a tier's
         // handle has to win over the tile layer beneath, which is transparent
         // to pointer events everywhere except the one button in it.
+        annotating ? (
+          // The pen replaces the drag and tier overlays rather than joining
+          // them: while it is out a press means a mark, and offering both
+          // would make every gesture a guess about which was intended.
+          <AnnotateLayer
+            doc={session.doc}
+            layout={layout}
+            width={boardWidth}
+            onAction={dispatch}
+            onDone={() => setAnnotating(false)}
+          >
+            {(live) => (
+              // `pointerEvents: none` is what stops a mark also starting a
+              // tile drag. The canvas is inside the pen's surface, so without
+              // it a press would reach the responder system underneath and
+              // both would claim the gesture.
+              <div style={{ pointerEvents: "none", width: boardWidth }}>
+                <Board
+                  doc={session.doc}
+                  width={boardWidth}
+                  layout={layout}
+                  liveAnnotation={live}
+                  onAction={dispatch}
+                  onExporterReady={onExporterReady}
+                  assetIds={assetIds}
+                  assetUrl={assetUrl}
+                />
+              </div>
+            )}
+          </AnnotateLayer>
+        ) : (
         <TierOverlay
           doc={session.doc}
           layout={layout}
@@ -551,6 +586,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
             </div>
           )}
         </TierOverlay>
+        )
       )}
       {editingItem && EditCanvasComp ? (
         <EditSheet

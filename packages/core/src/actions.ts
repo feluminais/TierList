@@ -1,4 +1,4 @@
-import type { DisplaySettings, ImageEdit, TierList } from "./types";
+import type { DisplaySettings, ImageEdit, Stroke, TierList } from "./types";
 
 /**
  * Every action that creates an entity carries the new id. The reducer never
@@ -49,6 +49,21 @@ export type TierListAction =
       index: number;
     }
   | { type: "placement/unplace"; itemId: string }
+  /**
+   * A freehand mark drawn *across* the board rather than inside one tile.
+   *
+   * Appended rather than replacing the set, so a gesture adds exactly one and
+   * `mergeKeyFor` can leave it unkeyed the way `item/setEdit` is: a run of
+   * separate marks must stay separate undo steps.
+   *
+   * Points and width are normalized against the board, the same convention a
+   * tile's strokes use against their source image, so an annotation keeps its
+   * place and its weight when the board is laid out at another width.
+   */
+  | { type: "board/addStroke"; stroke: Stroke }
+  | { type: "board/removeStroke"; strokeId: string }
+  /** Removes every board annotation in one step, so undo restores them all. */
+  | { type: "board/clearStrokes" }
   | { type: "display/set"; patch: Partial<DisplaySettings> }
   /**
    * Set the list-wide tile size *and* drop every per-row override, so every

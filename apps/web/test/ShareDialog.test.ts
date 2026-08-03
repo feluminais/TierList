@@ -125,3 +125,39 @@ describe("ShareDialog", () => {
     expect(screen.getByTestId("share-copy-view").textContent).toBe("Copy");
   });
 });
+
+describe("ShareDialog — compare with me", () => {
+  it("offers nothing to compare until there is a view link", () => {
+    mount();
+    expect(screen.queryByTestId("share-url-compare")).toBeNull();
+  });
+
+  /**
+   * The link the design doc calls "the flow that actually gets used": it opens
+   * the comparison with one side already filled, so the recipient only has to
+   * add their own.
+   */
+  it("derives a compare link carrying this list's code", () => {
+    mount({ viewUrl: "http://tl.test/l/ABCD2345" });
+    expect(screen.getByTestId<HTMLInputElement>("share-url-compare").value).toBe(
+      "http://tl.test/compare?codes=ABCD2345",
+    );
+  });
+
+  it("keeps the origin the view link came from", () => {
+    mount({ viewUrl: "https://example.com:8443/l/ZZZZ9999" });
+    expect(screen.getByTestId<HTMLInputElement>("share-url-compare").value).toBe(
+      "https://example.com:8443/compare?codes=ZZZZ9999",
+    );
+  });
+
+  it("copies the compare link independently of the view link", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+
+    mount({ viewUrl: "http://tl.test/l/ABCD2345" });
+    await fireEvent.click(screen.getByTestId("share-copy-compare"));
+
+    expect(writeText).toHaveBeenCalledWith("http://tl.test/compare?codes=ABCD2345");
+  });
+});

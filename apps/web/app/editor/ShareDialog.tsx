@@ -81,6 +81,27 @@ export function ShareDialog({
           onCreate={onShareView}
         />
 
+        {viewUrl ? (
+          <section style={offer} data-testid="share-compare">
+            <strong style={{ fontSize: 14 }}>Compare with me</strong>
+            <p style={{ margin: 0, color: "#8b98a6", fontSize: 12 }}>
+              Opens the comparison with your list already on one side. Whoever
+              you send it to adds theirs.
+            </p>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                readOnly
+                aria-label="Compare link"
+                data-testid="share-url-compare"
+                value={compareUrlFrom(viewUrl)}
+                onFocus={(event) => event.target.select()}
+                style={{ ...field, flex: 1 }}
+              />
+              <CopyButton value={compareUrlFrom(viewUrl)} testId="compare" />
+            </div>
+          </section>
+        ) : null}
+
         <Offer
           title="Let others fill it in"
           detail="Publishes the tiers and items as a template. Everyone who opens it gets their own copy to rank, and yours is untouched."
@@ -101,6 +122,44 @@ export function ShareDialog({
   );
 }
 
+/**
+ * The compare page, with this list's code already on one side.
+ *
+ * Derived from the view link rather than passed in separately: the code is the
+ * last path segment of one, and computing it here keeps a second URL shape out
+ * of the component's props. The design doc calls this "the flow that actually
+ * gets used" — nobody assembles a comparison from two codes by hand.
+ */
+function compareUrlFrom(viewUrl: string): string {
+  const code = viewUrl.replace(/^.*\/l\//, "").replace(/[?#].*$/, "");
+  const origin = viewUrl.replace(/\/l\/.*$/, "");
+  return `${origin}/compare?codes=${code}`;
+}
+
+/** Copies a string and says so, resetting when the string changes. */
+function CopyButton({ value, testId }: { value: string; testId: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => setCopied(false), [value]);
+
+  return (
+    <button
+      type="button"
+      data-testid={`share-copy-${testId}`}
+      onClick={() => {
+        navigator.clipboard
+          .writeText(value)
+          .then(() => setCopied(true))
+          .catch(() => {
+            // Refused; the link is on screen and selectable.
+          });
+      }}
+      style={button}
+    >
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
 function Offer({
   title,
   detail,
@@ -118,23 +177,6 @@ function Offer({
   busy: boolean;
   onCreate: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
-
-  // Reset when the link changes, so a fresh link does not inherit the previous
-  // one's "Copied" state and claim it is already on the clipboard.
-  useEffect(() => setCopied(false), [url]);
-
-  const copy = async () => {
-    if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-    } catch {
-      // Clipboard access can be refused, and there is nothing to do about it —
-      // the link is on screen and selectable, which is the fallback.
-    }
-  };
-
   return (
     <section style={offer}>
       <strong style={{ fontSize: 14 }}>{title}</strong>
@@ -149,14 +191,7 @@ function Offer({
             onFocus={(event) => event.target.select()}
             style={{ ...field, flex: 1 }}
           />
-          <button
-            type="button"
-            data-testid={`share-copy-${testId}`}
-            onClick={copy}
-            style={button}
-          >
-            {copied ? "Copied" : "Copy"}
-          </button>
+          <CopyButton value={url} testId={testId} />
         </div>
       ) : (
         <button

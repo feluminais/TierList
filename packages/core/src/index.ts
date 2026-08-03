@@ -5,3 +5,4 @@ export * from "./reduce";
 export * from "./migrate";
 export * from "./validate";
 export * from "./template";
+export * from "./compare";

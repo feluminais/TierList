@@ -8,8 +8,14 @@ import { newListId } from "./ids";
 export interface ShareState {
   /** Creates (or re-fetches) the read-only link to this list. */
   share: () => Promise<void>;
-  /** Publishes a snapshot of this list as a template others can fill. */
-  shareTemplate: () => Promise<void>;
+  /**
+   * Publishes a snapshot of this list as a template others can fill.
+   *
+   * `listed` opts the template into browse pages. Listing is a separate
+   * decision from sharing — an author who sends a link to two friends has not
+   * asked to be indexed — so it is passed rather than assumed.
+   */
+  shareTemplate: (listed: boolean) => Promise<void>;
   sharing: boolean;
   /** The read-only link, once one exists. */
   url: string | null;
@@ -92,7 +98,7 @@ export function useShare(
         // nicety; the link is the deliverable.
       }
 
-      const result = await client.shareList(listId, ogAssetId);
+      const result = await client.shareList(listId, { ogAssetId });
       if (mounted.current) setUrl(shareUrlFor(result.code));
     } catch (e) {
       if (mounted.current) setError(e instanceof Error ? e.message : String(e));
@@ -115,7 +121,7 @@ export function useShare(
    * already created rather than publishing another, because the id is minted
    * once and kept.
    */
-  const shareTemplate = useCallback(async () => {
+  const shareTemplate = useCallback(async (listed: boolean) => {
     if (!client) {
       setError("not connected to an API");
       return;
@@ -132,7 +138,7 @@ export function useShare(
         );
         templateIdRef.current = id;
       }
-      const result = await client.shareList(id);
+      const result = await client.shareList(id, { listed });
       if (mounted.current) setTemplateUrl(shareUrlFor(result.code));
     } catch (e) {
       if (mounted.current) setError(e instanceof Error ? e.message : String(e));

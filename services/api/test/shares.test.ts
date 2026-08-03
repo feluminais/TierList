@@ -323,7 +323,15 @@ describe("GET /shares/:code", () => {
 
     const res = await app.request(`/shares/${code}`);
     const body = (await res.json()) as { document: TierList } & Record<string, unknown>;
-    expect(Object.keys(body).sort()).toEqual(["assets", "document", "ogAssetId"]);
+    // `listed` is here deliberately, and is safe: it says whether this share
+    // appears on browse pages, which is a fact about a page anyone holding the
+    // code can already see. The list id is what must not appear.
+    expect(Object.keys(body).sort()).toEqual([
+      "assets",
+      "document",
+      "listed",
+      "ogAssetId",
+    ]);
     // The document carries its own id, which is unavoidable — it is the
     // document. What matters is that no *extra* field hands it over.
     expect(body.document.id).toBe("secret-list-id");

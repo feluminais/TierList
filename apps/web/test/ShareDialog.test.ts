@@ -44,6 +44,27 @@ describe("ShareDialog", () => {
     expect(props.onShareView).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * "Anyone with the link" and "anyone at all" are different offers, and the
+   * second is the one that cannot be taken back once a crawler has seen it.
+   * A default of on would publish work someone only meant to send to a friend.
+   */
+  it("does not list publicly unless the author asks", () => {
+    const props = mount();
+
+    expect(screen.getByTestId<HTMLInputElement>("share-listed").checked).toBe(false);
+    fireEvent.click(screen.getByTestId("share-create-template"));
+    expect(props.onShareTemplate).toHaveBeenCalledWith(false);
+  });
+
+  it("passes the listing choice through when it is ticked", () => {
+    const props = mount();
+
+    fireEvent.click(screen.getByTestId("share-listed"));
+    fireEvent.click(screen.getByTestId("share-create-template"));
+    expect(props.onShareTemplate).toHaveBeenCalledWith(true);
+  });
+
   it("shows each link only once it exists, and keeps them apart", () => {
     mount({ viewUrl: "http://x/l/AAAAAAAA" });
 

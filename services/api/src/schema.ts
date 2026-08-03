@@ -1,5 +1,6 @@
 import type { TierList } from "@tl/core";
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -122,9 +123,23 @@ export const shares = pgTable(
     listId: text("list_id").notNull(),
     ownerId: text("owner_id").notNull(),
     ogAssetId: text("og_asset_id"),
+    /**
+     * Whether this share appears on browse pages.
+     *
+     * Separate from having a code at all: "anyone with the link" and "anyone
+     * at all" are different offers, and an author who sends a link to two
+     * friends has not asked to be indexed. Listing is opted into, and the
+     * column lives here rather than on the document because it describes the
+     * *share*, not the list — the same list can be private and its published
+     * template listed.
+     */
+    listed: boolean("listed").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
   },
-  (t) => [uniqueIndex("shares_list_idx").on(t.listId)],
+  (t) => [
+    uniqueIndex("shares_list_idx").on(t.listId),
+    index("shares_listed_idx").on(t.listed),
+  ],
 );
 
 export type ShareRow = typeof shares.$inferSelect;

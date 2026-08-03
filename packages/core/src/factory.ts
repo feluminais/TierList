@@ -6,12 +6,35 @@ import {
   type TierList,
 } from "./types";
 
+/**
+ * The tier colours, in the order they are handed out.
+ *
+ * One list, exported, because two surfaces mint tiers — the default five here,
+ * and every tier a user adds afterwards — and a second copy is how a new tier
+ * ends up a washed-out cousin of the ones above it. The first five are the
+ * canonical S–D ramp; the rest continue it so an eighth tier still reads as
+ * part of the same scale.
+ *
+ * Saturated on purpose: these sit behind bold labels on a near-black board,
+ * where a pastel reads as grey.
+ */
+export const TIER_PALETTE: readonly string[] = [
+  "#ff4d4d",
+  "#ff9f2e",
+  "#ffd633",
+  "#7ed957",
+  "#39b7ff",
+  "#a06bff",
+  "#ff5fc8",
+  "#00d3b8",
+];
+
 const DEFAULT_ROWS: ReadonlyArray<{ label: string; color: string }> = [
-  { label: "S", color: "#ff4d4d" },
-  { label: "A", color: "#ff9f2e" },
-  { label: "B", color: "#ffd633" },
-  { label: "C", color: "#7ed957" },
-  { label: "D", color: "#39b7ff" },
+  { label: "S", color: TIER_PALETTE[0]! },
+  { label: "A", color: TIER_PALETTE[1]! },
+  { label: "B", color: TIER_PALETTE[2]! },
+  { label: "C", color: TIER_PALETTE[3]! },
+  { label: "D", color: TIER_PALETTE[4]! },
 ];
 
 export function defaultImageEdit(): ImageEdit {

@@ -24,6 +24,15 @@ export interface RouteDeps {
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 /**
+ * Bounds on a browse request, so a public unauthenticated endpoint cannot be
+ * asked for the whole table, or for a search term long enough to be a payload
+ * in its own right.
+ */
+const DEFAULT_BROWSE_LIMIT = 48;
+const MAX_BROWSE_LIMIT = 96;
+const MAX_SEARCH_LENGTH = 80;
+
+/**
  * Cheap shape check so an id that cannot possibly name a row never reaches
  * the database — the same reasoning as `isValidTokenFormat` in tokens.ts and
  * `SAFE_KEY` in store.ts, applied to asset ids. This is deliberately not "is
@@ -300,12 +309,16 @@ export function createRoutes(deps: RouteDeps) {
     if (!listId) return c.json({ error: "not found" }, 404);
 
     const ownerId = c.get("ownerId");
-    const body = (await c.req.json().catch(() => null)) as { ogAssetId?: unknown } | null;
+    const body = (await c.req.json().catch(() => null)) as { ogAssetId?: unknown; listed?: unknown } | null;
 
     const ogAssetId =
       typeof body?.ogAssetId === "string" && isPlausibleAssetId(body.ogAssetId)
         ? body.ogAssetId
         : null;
+    // Absent means "leave it as it is". Listing is a separate decision from
+    // sharing, and a client that only wanted a link must not silently
+    // unlist a share the author had already published.
+    const listed = typeof body?.listed === "boolean" ? body.listed : null;
 
     // Unknown id and someone else's id give the same answer, exactly as PATCH
     // does: telling a stranger which list ids exist is a leak no legitimate
@@ -328,7 +341,17 @@ export function createRoutes(deps: RouteDeps) {
       if (ogAssetId && ogAssetId !== existing.ogAssetId) {
         await deps.repository.setShareOgAsset(existing.code, ogAssetId);
       }
-      return c.json({ code: existing.code, ogAssetId: ogAssetId ?? existing.ogAssetId }, 200);
+      if (listed !== null && listed !== existing.listed) {
+        await deps.repository.setShareListed(existing.code, listed);
+      }
+      return c.json(
+        {
+          code: existing.code,
+          ogAssetId: ogAssetId ?? existing.ogAssetId,
+          listed: listed ?? existing.listed,
+        },
+        200,
+      );
     }
 
     // A collision is a lost race, not an error: 40 bits of code space makes it
@@ -342,9 +365,10 @@ export function createRoutes(deps: RouteDeps) {
         listId,
         ownerId,
         ogAssetId,
+        listed: listed ?? false,
         createdAt: new Date(),
       });
-      if (claimed) return c.json({ code, ogAssetId }, 201);
+      if (claimed) return c.json({ code, ogAssetId, listed: listed ?? false }, 201);
     }
     return c.json({ error: "could not allocate a share code" }, 500);
   });
@@ -383,7 +407,49 @@ export function createRoutes(deps: RouteDeps) {
     ];
     const assets = await deps.repository.findAssetSizes(assetIds);
 
-    return c.json({ document: doc, ogAssetId: share.ogAssetId, assets });
+    return c.json({
+      document: doc,
+      ogAssetId: share.ogAssetId,
+      listed: share.listed,
+      assets,
+    });
+  });
+
+  /**
+   * Publicly listed shares.
+   *
+   * Unauthenticated, and deliberately narrow: it returns the projected columns
+   * a grid needs and never a document. Browsing is not reading — a reader who
+   * wants the list follows the code to `GET /shares/:code`, which is the one
+   * place a document is served from.
+   *
+   * Only shares whose author opted in appear. Holding a link and being indexed
+   * are different offers, and the second is asked for rather than assumed.
+   */
+  routes.get("/browse", async (c) => {
+    const category = c.req.query("category");
+    const text = c.req.query("q");
+    const requested = Number.parseInt(c.req.query("limit") ?? "", 10);
+
+    const results = await deps.repository.browse({
+      // An unknown category is not an error and not "everything": it is a
+      // category with nothing in it, which is what an empty result says.
+      categoryId: category ? category : null,
+      text: text ? text.slice(0, MAX_SEARCH_LENGTH) : null,
+      limit: Number.isFinite(requested)
+        ? Math.min(Math.max(requested, 1), MAX_BROWSE_LIMIT)
+        : DEFAULT_BROWSE_LIMIT,
+    });
+
+    return c.json({
+      results: results.map((r) => ({
+        code: r.code,
+        title: r.title,
+        categoryId: r.categoryId,
+        ogAssetId: r.ogAssetId,
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+    });
   });
 
   return routes;

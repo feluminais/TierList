@@ -3,8 +3,22 @@
 import type { AssetResponse, Client } from "@tl/api-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/**
+ * What this hook needs from a picked image, and nothing more.
+ *
+ * A browser `File` satisfies it structurally, and so does the `Blob` a React
+ * Native `fetch` of a content:// URI resolves to. Naming `File` here instead
+ * would tie the hook to the DOM for two properties both platforms already
+ * have.
+ */
+export interface UploadSource {
+  /** The claimed MIME type. A hint — the server reads the bytes to be sure. */
+  type: string;
+  arrayBuffer: () => Promise<ArrayBuffer>;
+}
+
 export interface AssetUpload {
-  upload: (file: File) => Promise<void>;
+  upload: (source: UploadSource) => Promise<void>;
   uploading: boolean;
   error: string | null;
 }
@@ -42,7 +56,7 @@ export function useAssetUpload(
   }, []);
 
   const upload = useCallback(
-    async (file: File) => {
+    async (source: UploadSource) => {
       if (!client) {
         // Not a silent no-op: with no API configured this is the normal state
         // of this route, and a button that appears to do nothing is worse than
@@ -54,10 +68,10 @@ export function useAssetUpload(
       setError(null);
       setUploading(true);
       try {
-        const bytes = new Uint8Array(await file.arrayBuffer());
+        const bytes = new Uint8Array(await source.arrayBuffer());
         // The declared type is a hint only — the server decides what the image
         // really is by reading the bytes, and may correct it.
-        const asset = await client.uploadAsset(bytes, file.type || "application/octet-stream");
+        const asset = await client.uploadAsset(bytes, source.type || "application/octet-stream");
         if (mounted.current) onUploaded(asset);
       } catch (e) {
         if (mounted.current) setError(e instanceof Error ? e.message : String(e));

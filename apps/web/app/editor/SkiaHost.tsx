@@ -6,6 +6,7 @@ import {
   defaultImageEdit,
   fillProgress,
   isFill,
+  normalizeTags,
   type TierList,
   type TierListAction,
 } from "@tl/core";
@@ -32,17 +33,20 @@ import {
 } from "react";
 import { AnnotateLayer } from "./AnnotateLayer";
 import { downloadBytes, filenameFor } from "./download";
-import { newId } from "./ids";
+import { newId } from "@tl/app-core";
 import { EditSheet, type EditCanvasComponent } from "./EditSheet";
 import { NewItemSheet } from "./NewItemSheet";
 import { ShareDialog } from "./ShareDialog";
 import { TierOverlay } from "./TierOverlay";
 import { TileEditOverlay } from "./TileEditButton";
 import { Toolbar } from "./Toolbar";
-import { useApiClient } from "./useApiClient";
-import { useAssetUpload } from "./useAssetUpload";
-import { useAutosave, type AutosaveHandlers } from "./useAutosave";
-import { useShare } from "./useShare";
+import {
+  useApiClient,
+  useAssetUpload,
+  useAutosave,
+  useShare,
+  type AutosaveHandlers,
+} from "@tl/app-core";
 
 /**
  * `@tl/editor`'s `BoardExporter`, restated rather than imported — the same
@@ -312,6 +316,17 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
   // `TierOverlay` itself, because none of it needs anything this component
   // owns and a pass-through per action would be five more places to keep in
   // step with the reducer.
+  const onCategory = useCallback(
+    (categoryId: string | null) => dispatch({ type: "meta/set", patch: { categoryId } }),
+    [dispatch],
+  );
+
+  const onTags = useCallback(
+    (text: string) =>
+      dispatch({ type: "meta/set", patch: { tags: normalizeTags(text.split(",")) } }),
+    [dispatch],
+  );
+
   const onAddRow = useCallback(
     (label: string, color: string) => dispatch({ type: "row/add", id: newId(), label, color }),
     [dispatch],
@@ -457,6 +472,8 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
         onExportJson={onExportJson}
         onShare={client ? openShare : null}
         onAnnotate={() => setAnnotating(true)}
+        onCategory={onCategory}
+        onTags={onTags}
       />
 
       {filling ? <FillBanner placed={progress.placed} total={progress.total} /> : null}
@@ -475,7 +492,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
         <ShareDialog
           onShareView={() => void sharing.share()}
           viewUrl={sharing.url}
-          onShareTemplate={() => void sharing.shareTemplate()}
+          onShareTemplate={(listed) => void sharing.shareTemplate(listed)}
           templateUrl={sharing.templateUrl}
           busy={sharing.sharing}
           error={sharing.error}

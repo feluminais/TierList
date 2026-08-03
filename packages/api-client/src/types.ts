@@ -19,6 +19,23 @@ export interface ShareResponse {
   code: string;
   /** The asset holding the link-preview image, once one has been rendered. */
   ogAssetId: string | null;
+  /** Whether this share appears on browse pages. */
+  listed: boolean;
+}
+
+/** One card on a browse page. Never carries a document — see `GET /browse`. */
+export interface BrowseResult {
+  code: string;
+  title: string;
+  categoryId: string | null;
+  ogAssetId: string | null;
+  updatedAt: string;
+}
+
+export interface BrowseParams {
+  category?: string | null;
+  q?: string | null;
+  limit?: number;
 }
 
 /** The intrinsic pixel size of an uploaded image, as the server measured it. */
@@ -32,6 +49,8 @@ export interface AssetSize {
 export interface SharedList {
   document: import("@tl/core").TierList;
   ogAssetId: string | null;
+  /** Whether this share appears on browse pages. */
+  listed: boolean;
   /**
    * Sizes for every image the document references.
    *

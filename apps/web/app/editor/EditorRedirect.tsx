@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { LIST_ID_KEY } from "./SkiaHost";
-import { newListId } from "./ids";
+import { newListId } from "@tl/app-core";
 
 /**
  * Sends `/editor` on to `/editor/<id>`.

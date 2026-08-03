@@ -1,9 +1,10 @@
 "use client";
 
+import { CATEGORIES } from "@tl/core";
 import type { EditorSession } from "@tl/editor-core";
 import Link from "next/link";
 import type { CSSProperties } from "react";
-import type { Connection } from "./useApiClient";
+import type { Connection } from "@tl/app-core";
 
 export interface ToolbarProps {
   session: EditorSession;
@@ -20,6 +21,20 @@ export interface ToolbarProps {
   onShare: (() => void) | null;
   /** Puts the pen out for drawing across the whole list. */
   onAnnotate: () => void;
+  /**
+   * Files the list under a category. `null` clears it.
+   *
+   * The taxonomy is closed, and this is the only thing that writes
+   * `categoryId` — a browse page is only useful if two people filing the same
+   * kind of list pick the same one, which free text cannot deliver.
+   */
+  onCategory: (categoryId: string | null) => void;
+  /**
+   * Sets the free-form tags. Takes the raw comma-separated text, because the
+   * cleaning is `normalizeTags`' job and doing it in two places is how the
+   * stored form and the searched form drift apart.
+   */
+  onTags: (text: string) => void;
 }
 
 /**
@@ -40,6 +55,8 @@ export function Toolbar({
   onExportJson,
   onShare,
   onAnnotate,
+  onCategory,
+  onTags,
 }: ToolbarProps) {
   const save = saveReadout(session, connection);
 
@@ -111,6 +128,38 @@ export function Toolbar({
       >
         JSON
       </button>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#888" }}>
+        Category
+        <select
+          aria-label="Category"
+          data-testid="category"
+          value={session.doc.categoryId ?? ""}
+          onChange={(event) => onCategory(event.target.value || null)}
+          style={field}
+        >
+          <option value="">Uncategorised</option>
+          {CATEGORIES.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <input
+        aria-label="Tags"
+        data-testid="tags-input"
+        defaultValue={session.doc.tags.join(", ")}
+        // Uncontrolled, and committed on blur rather than per keystroke:
+        // `normalizeTags` drops empties and lowercases, so feeding its output
+        // back into a controlled field would eat the comma the moment it was
+        // typed.
+        onBlur={(event) => onTags(event.target.value)}
+        placeholder="tags, comma separated"
+        style={{ ...field, flex: "0 1 200px" }}
+        title="Free-form tags — anything the category cannot say"
+      />
+
       <button
         type="button"
         data-testid="annotate"

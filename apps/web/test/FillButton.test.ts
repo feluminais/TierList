@@ -3,7 +3,7 @@ import { act, createElement } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FillButton } from "../app/l/[code]/FillButton";
-import { TOKEN_STORAGE_KEY } from "../app/editor/useApiClient";
+import { TOKEN_STORAGE_KEY } from "@tl/app-core";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

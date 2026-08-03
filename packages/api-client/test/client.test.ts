@@ -231,7 +231,7 @@ describe("shares", () => {
       .mockResolvedValue(jsonResponse({ code: "ABCDEFGH", ogAssetId: "a1" }));
     const client = createClient({ baseUrl: BASE, token: "secret", fetch: fetchFn });
 
-    await client.shareList("list-1", "a1");
+    await client.shareList("list-1", { ogAssetId: "a1" });
 
     expect(JSON.parse(fetchFn.mock.calls[0]![1].body as string)).toEqual({ ogAssetId: "a1" });
   });
@@ -280,5 +280,79 @@ describe("shares", () => {
     const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ error: "boom" }, 500));
     const client = createClient({ baseUrl: BASE, fetch: fetchFn });
     await expect(client.getShare("ABCDEFGH")).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("browse", () => {
+  it("asks for everything when given no filters, without a token", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ results: [] }));
+    const client = createClient({ baseUrl: BASE, token: "secret", fetch: fetchFn });
+
+    expect(await client.browse()).toEqual([]);
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(url).toBe(`${BASE}/browse`);
+    // Browsing is public by definition; sending a token would make a listing
+    // behave differently for its own author.
+    expect(init.headers.authorization).toBeUndefined();
+  });
+
+  it("passes a category, a query and a limit", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ results: [] }));
+    const client = createClient({ baseUrl: BASE, fetch: fetchFn });
+
+    await client.browse({ category: "games", q: "souls", limit: 12 });
+    expect(fetchFn.mock.calls[0]![0]).toBe(`${BASE}/browse?category=games&q=souls&limit=12`);
+  });
+
+  it("encodes a query that would otherwise break the URL", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ results: [] }));
+    const client = createClient({ baseUrl: BASE, fetch: fetchFn });
+
+    await client.browse({ q: "a&b=c d" });
+    expect(fetchFn.mock.calls[0]![0]).toBe(`${BASE}/browse?q=a%26b%3Dc+d`);
+  });
+
+  it("omits filters that were not asked for", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ results: [] }));
+    const client = createClient({ baseUrl: BASE, fetch: fetchFn });
+
+    await client.browse({ category: null, q: "" });
+    expect(fetchFn.mock.calls[0]![0]).toBe(`${BASE}/browse`);
+  });
+
+  it("returns the results array", async () => {
+    const row = {
+      code: "ABCD2345", title: "Noodles", categoryId: "food",
+      ogAssetId: null, updatedAt: "2026-08-01T12:00:00.000Z",
+    };
+    const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ results: [row] }));
+    const client = createClient({ baseUrl: BASE, fetch: fetchFn });
+    expect(await client.browse()).toEqual([row]);
+  });
+});
+
+describe("shareList options", () => {
+  it("sends only the keys the caller set, so absent means leave it alone", async () => {
+    // A fresh Response per call: a body can only be read once, and reusing one
+    // across three calls fails on the second with "Body has already been read"
+    // rather than on anything this test is about.
+    const fetchFn = vi
+      .fn()
+      .mockImplementation(async () =>
+        jsonResponse({ code: "ABCD2345", ogAssetId: null, listed: false }),
+      );
+    const client = createClient({ baseUrl: BASE, token: "s", fetch: fetchFn });
+
+    await client.shareList("list-1");
+    expect(JSON.parse(fetchFn.mock.calls[0]![1].body as string)).toEqual({});
+
+    await client.shareList("list-1", { listed: true });
+    expect(JSON.parse(fetchFn.mock.calls[1]![1].body as string)).toEqual({ listed: true });
+
+    await client.shareList("list-1", { ogAssetId: "a1", listed: false });
+    expect(JSON.parse(fetchFn.mock.calls[2]![1].body as string)).toEqual({
+      ogAssetId: "a1",
+      listed: false,
+    });
   });
 });

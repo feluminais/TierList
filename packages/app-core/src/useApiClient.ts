@@ -24,9 +24,22 @@ export type Connection =
   | { state: "connected"; client: Client }
   | { state: "failed"; reason: string };
 
+/**
+ * Where the device token is kept, in the smallest shape both platforms can
+ * satisfy.
+ *
+ * Reads may be async because React Native's storage is: `AsyncStorage.getItem`
+ * returns a promise, and `localStorage.getItem` returns a string. Both are
+ * awaited, so one hook serves both without either pretending to be the other.
+ */
+export interface TokenStore {
+  getItem: (key: string) => string | null | Promise<string | null>;
+  setItem: (key: string, value: string) => void | Promise<void>;
+}
+
 export interface ApiClientIo {
   fetch?: typeof globalThis.fetch;
-  storage?: Pick<Storage, "getItem" | "setItem">;
+  storage?: TokenStore | null;
 }
 
 /**
@@ -67,7 +80,7 @@ export function useApiClient(
       const storage = ioRef.current.storage ?? browserStorage();
 
       try {
-        let token = storage?.getItem(TOKEN_STORAGE_KEY) ?? undefined;
+        let token = (await storage?.getItem(TOKEN_STORAGE_KEY)) ?? undefined;
 
         // A stored token can name a device the server has forgotten: the
         // database was reset, the row was pruned, or the scratch API restarted
@@ -93,7 +106,7 @@ export function useApiClient(
           // Stored before the liveness check on purpose: a token minted and
           // then dropped is an orphaned row on the server. Overwrites a
           // rejected one, which is all the cleanup a dead token needs.
-          storage?.setItem(TOKEN_STORAGE_KEY, token);
+          await storage?.setItem(TOKEN_STORAGE_KEY, token);
         }
         if (!alive) return;
         setConnection({
@@ -137,10 +150,17 @@ async function tokenIsLive(client: Client): Promise<boolean> {
   }
 }
 
-/** localStorage can throw on access under some privacy settings. */
-function browserStorage(): Pick<Storage, "getItem" | "setItem"> | null {
+/**
+ * `localStorage` when there is one.
+ *
+ * Reached through `globalThis` rather than named directly so this compiles in
+ * a package with no DOM lib, and guarded because access itself throws under
+ * some privacy settings. React Native has no `localStorage`, so a caller there
+ * passes its own store and never reaches this.
+ */
+function browserStorage(): TokenStore | null {
   try {
-    return globalThis.localStorage ?? null;
+    return (globalThis as { localStorage?: TokenStore }).localStorage ?? null;
   } catch {
     return null;
   }

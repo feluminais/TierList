@@ -14,6 +14,7 @@
   "dependencies": {
     "@shopify/react-native-skia": "2.6.2",
     "@tl/api-client": "workspace:*",
+    "@tl/app-core": "workspace:*",
     "@tl/core": "workspace:*",
     "@tl/editor": "workspace:*",
     "@tl/editor-core": "workspace:*",

@@ -20,7 +20,7 @@ import {
   type ReactNode,
 } from "react";
 import { ColorPopover } from "./ColorPopover";
-import { newId } from "./ids";
+import { newId } from "@tl/app-core";
 
 /** Pen weights offered, as fractions of the board's width. */
 const WIDTHS = [

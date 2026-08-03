@@ -2,6 +2,8 @@ import { migrate, type TierList } from "@tl/core";
 import type {
   AssetResponse,
   AssetSize,
+  BrowseParams,
+  BrowseResult,
   ListSummary,
   ShareResponse,
   SharedList,
@@ -50,7 +52,12 @@ export interface Client {
    * call every time the user presses Share. `ogAssetId` names an already
    * uploaded image to use as the link preview.
    */
-  shareList: (listId: string, ogAssetId?: string) => Promise<ShareResponse>;
+  shareList: (
+    listId: string,
+    options?: { ogAssetId?: string; listed?: boolean },
+  ) => Promise<ShareResponse>;
+  /** Publicly listed shares. No token: browsing is public by definition. */
+  browse: (params?: BrowseParams) => Promise<BrowseResult[]>;
   /** Reads a shared list by code. Public — no token involved. */
   getShare: (code: string) => Promise<SharedList | null>;
 }
@@ -151,13 +158,34 @@ export function createClient(options: ClientOptions): Client {
       return (await expectOk(res)) as AssetResponse;
     },
 
-    async shareList(listId, ogAssetId) {
+    async shareList(listId, options) {
+      // Only the keys the caller actually set. An explicit `listed: undefined`
+      // and an absent key serialise the same, but building the object this way
+      // keeps "leave it as it is" expressible and distinct from "set it false".
+      const body: Record<string, unknown> = {};
+      if (options?.ogAssetId !== undefined) body.ogAssetId = options.ogAssetId;
+      if (options?.listed !== undefined) body.listed = options.listed;
+
       const res = await call(`/lists/${segment(listId)}/share`, {
         method: "POST",
-        body: ogAssetId === undefined ? {} : { ogAssetId },
+        body,
         auth: true,
       });
       return (await expectOk(res)) as ShareResponse;
+    },
+
+    async browse(params) {
+      const query = new URLSearchParams();
+      if (params?.category) query.set("category", params.category);
+      if (params?.q) query.set("q", params.q);
+      if (params?.limit !== undefined) query.set("limit", String(params.limit));
+
+      const suffix = query.toString();
+      const res = await call(`/browse${suffix ? `?${suffix}` : ""}`, {
+        method: "GET",
+        auth: false,
+      });
+      return ((await expectOk(res)) as { results: BrowseResult[] }).results;
     },
 
     async getShare(code) {
@@ -169,6 +197,7 @@ export function createClient(options: ClientOptions): Client {
       const body = (await expectOk(res)) as {
         document: unknown;
         ogAssetId?: string | null;
+        listed?: boolean;
         assets?: AssetSize[];
       };
       // migrate() decides what a document means, on both sides of the wire —
@@ -177,6 +206,7 @@ export function createClient(options: ClientOptions): Client {
       return {
         document: migrate(body.document),
         ogAssetId: body.ogAssetId ?? null,
+        listed: body.listed ?? false,
         assets: body.assets ?? [],
       };
     },

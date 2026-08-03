@@ -1,5 +1,5 @@
 import { migrate, type TierList } from "@tl/core";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   assets,
@@ -92,6 +92,16 @@ export interface Repository {
   findShareByList: (listId: string) => Promise<ShareRow | null>;
   /** Points an existing share at a (re-rendered) OG image. */
   setShareOgAsset: (code: string, ogAssetId: string) => Promise<void>;
+  /** Opts a share into, or out of, appearing on browse pages. */
+  setShareListed: (code: string, listed: boolean) => Promise<void>;
+  /**
+   * Publicly listed shares, newest first.
+   *
+   * Reads the projected columns rather than the documents: browse shows a
+   * title, a category and a picture, and deserialising every stored document
+   * to render a grid is what those columns exist to avoid.
+   */
+  browse: (query: BrowseQuery) => Promise<BrowseRow[]>;
 }
 
 /** The single place projected columns are derived from the document. */
@@ -109,6 +119,38 @@ function toRow(doc: TierList, ownerId: string): NewTierListRow {
     createdAt: new Date(doc.createdAt),
     updatedAt: new Date(doc.updatedAt),
   };
+}
+
+/**
+ * Escape the characters `LIKE` treats as syntax.
+ *
+ * Parameterising the value keeps it out of the SQL text, which stops
+ * injection — but it does *not* stop `%` and `_` inside that value from being
+ * read as wildcards, so a search for "%" would match every row and a search
+ * for "a_c" would match "abc". Postgres reads a backslash as the escape
+ * character in a `LIKE` pattern unless told otherwise, so escaping these three
+ * makes the user's text mean itself. The backslash goes first, or it would
+ * escape the escapes added after it.
+ */
+function escapeLike(text: string): string {
+  return text.replace(/[\\%_]/g, (match) => `\\${match}`);
+}
+
+export interface BrowseQuery {
+  /** A category id, or null for every category. */
+  categoryId?: string | null;
+  /** Free text matched against the title, case-insensitively. */
+  text?: string | null;
+  limit: number;
+}
+
+export interface BrowseRow {
+  code: string;
+  listId: string;
+  title: string;
+  categoryId: string | null;
+  ogAssetId: string | null;
+  updatedAt: Date;
 }
 
 export class RevisionConflictError extends Error {
@@ -266,6 +308,36 @@ export function createRepository(db: Db): Repository {
 
     async setShareOgAsset(code, ogAssetId) {
       await db.update(shares).set({ ogAssetId }).where(eq(shares.code, code));
+    },
+
+    async setShareListed(code, listed) {
+      await db.update(shares).set({ listed }).where(eq(shares.code, code));
+    },
+
+    async browse({ categoryId, text, limit }) {
+      const conditions = [eq(shares.listed, true)];
+      if (categoryId) conditions.push(eq(tierLists.categoryId, categoryId));
+      if (text) {
+        // `ilike` rather than a text-search index: the corpus is small, this
+        // is one indexable column, and a real ranking function is a decision
+        // to make when there is enough content for ranking to mean anything.
+        conditions.push(ilike(tierLists.title, `%${escapeLike(text)}%`));
+      }
+
+      return db
+        .select({
+          code: shares.code,
+          listId: tierLists.id,
+          title: tierLists.title,
+          categoryId: tierLists.categoryId,
+          ogAssetId: shares.ogAssetId,
+          updatedAt: tierLists.updatedAt,
+        })
+        .from(shares)
+        .innerJoin(tierLists, eq(tierLists.id, shares.listId))
+        .where(and(...conditions))
+        .orderBy(desc(tierLists.updatedAt))
+        .limit(limit);
     },
   };
 }

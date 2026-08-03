@@ -1,6 +1,6 @@
 "use client";
 
-import type { TierList, TierListAction } from "@tl/core";
+import { TIER_PALETTE, type TierList, type TierListAction } from "@tl/core";
 import {
   DRAG_HOLD_MS,
   clampTileSize,
@@ -446,7 +446,7 @@ export function TierOverlay({
             data-testid="tier-add"
             title="Add a tier"
             aria-label="Add a tier"
-            onClick={() => onAddRow("", PALETTE[doc.rows.length % PALETTE.length]!)}
+            onClick={() => onAddRow("", TIER_PALETTE[doc.rows.length % TIER_PALETTE.length]!)}
             style={{
               position: "absolute",
               left: lastRow.labelRect.x + lastRow.labelRect.width / 2 - ADD_TIER_WIDTH / 2,
@@ -551,7 +551,7 @@ export function TierOverlay({
  * tier added by hand looks like it belongs beside the ones that came with the
  * document.
  */
-const PALETTE = ["#ff7f7f", "#ffbf7f", "#ffff7f", "#bfff7f", "#7fbfff", "#bf9fff"];
+
 
 function editButtonStyle(label: Rect): CSSProperties {
   return {

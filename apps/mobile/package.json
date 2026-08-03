@@ -11,9 +11,13 @@
     "deploy": "npx expo export -p web && npx eas-cli@latest deploy"
   },
   "dependencies": {
+    "@react-native-async-storage/async-storage": "^3.1.1",
     "@shopify/react-native-skia": "2.6.2",
+    "@tl/api-client": "workspace:*",
+    "@tl/app-core": "workspace:*",
     "@tl/core": "workspace:*",
     "@tl/editor": "workspace:*",
+    "@tl/editor-core": "workspace:*",
     "expo": "^57.0.1",
     "expo-linking": "~57.0.1",
     "expo-router": "~57.0.2",

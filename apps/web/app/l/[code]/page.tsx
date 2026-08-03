@@ -1,6 +1,7 @@
 import { createClient, type SharedList } from "@tl/api-client";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { jsonLdScript, shareJsonLd, siteOrigin } from "../../seo";
 import { FillButton } from "./FillButton";
 import { StaticBoard } from "./StaticBoard";
 
@@ -111,6 +112,21 @@ export default async function SharedListPage({ params }: PageProps) {
         color: "#e6edf3",
       }}
     >
+      <script
+        type="application/ld+json"
+        data-testid="jsonld"
+        // The one place structured data belongs: rendered by the server, in
+        // the document a crawler actually receives. A client effect that
+        // injected it would be invisible to anything that does not run JS.
+        dangerouslySetInnerHTML={jsonLdScript(
+          shareJsonLd({
+            doc,
+            url: `${siteOrigin()}/l/${code}`,
+            image: share.ogAssetId && client ? client.assetUrl(share.ogAssetId) : null,
+          }),
+        )}
+      />
+
       <h1 style={{ fontSize: 28, margin: "0 0 4px" }}>{doc.title || "Untitled tier list"}</h1>
       {doc.description ? (
         <p style={{ margin: "0 0 16px", color: "#8b98a6" }}>{doc.description}</p>

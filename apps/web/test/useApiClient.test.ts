@@ -6,7 +6,7 @@ import {
   TOKEN_STORAGE_KEY,
   type ApiClientIo,
   type Connection,
-} from "../app/editor/useApiClient";
+} from "@tl/app-core";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;

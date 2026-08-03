@@ -4,8 +4,7 @@ import { createClient, type Client } from "@tl/api-client";
 import { startFill, type TierList } from "@tl/core";
 import { useRouter } from "next/navigation";
 import { useState, type CSSProperties } from "react";
-import { newListId } from "../../editor/ids";
-import { TOKEN_STORAGE_KEY } from "../../editor/useApiClient";
+import { newListId, TOKEN_STORAGE_KEY } from "@tl/app-core";
 
 export interface FillButtonProps {
   /** The shared document, already fetched and migrated by the page. */

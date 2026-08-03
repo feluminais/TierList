@@ -4,8 +4,7 @@ import type { ListSummary } from "@tl/api-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
-import { newListId } from "../editor/ids";
-import { useApiClient } from "../editor/useApiClient";
+import { newListId, useApiClient } from "@tl/app-core";
 
 /**
  * A flat view of everything this device owns: lists, templates published from

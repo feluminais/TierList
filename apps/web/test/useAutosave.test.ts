@@ -15,7 +15,7 @@ import {
   useAutosave,
   type AutosaveHandlers,
   type AutosaveTimings,
-} from "../app/editor/useAutosave";
+} from "@tl/app-core";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
   true;
@@ -76,6 +76,7 @@ function fakeClient(): { client: Client; calls: Pending[] } {
     updateList: (doc, expectedRevision) => hold("update", doc, expectedRevision),
     uploadAsset: () => Promise.reject(new Error("not used here")),
     shareList: () => Promise.reject(new Error("not used here")),
+    browse: () => Promise.resolve([]),
     getShare: () => Promise.resolve(null),
     assetUrl: () => {
       throw new Error("not used here");

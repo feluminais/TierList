@@ -7,7 +7,7 @@ export interface ShareDialogProps {
   onShareView: () => void;
   viewUrl: string | null;
   /** Publishes a template others can fill, and returns its link. */
-  onShareTemplate: () => void;
+  onShareTemplate: (listed: boolean) => void;
   templateUrl: string | null;
   busy: boolean;
   error: string | null;
@@ -38,6 +38,14 @@ export function ShareDialog({
   onClose,
 }: ShareDialogProps) {
   const ref = useRef<HTMLDivElement | null>(null);
+  /**
+   * Whether publishing also lists the template on browse pages.
+   *
+   * Off by default, and asked rather than assumed: "anyone with the link" and
+   * "anyone at all" are different offers, and defaulting to the second would
+   * publish work the author only meant to send to a friend.
+   */
+  const [listed, setListed] = useState(false);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -102,15 +110,49 @@ export function ShareDialog({
           </section>
         ) : null}
 
-        <Offer
-          title="Let others fill it in"
-          detail="Publishes the tiers and items as a template. Everyone who opens it gets their own copy to rank, and yours is untouched."
-          actionLabel="Create template link"
-          testId="template"
-          url={templateUrl}
-          busy={busy}
-          onCreate={onShareTemplate}
-        />
+        <section style={offer}>
+          <strong style={{ fontSize: 14 }}>Let others fill it in</strong>
+          <p style={{ margin: 0, color: "#8b98a6", fontSize: 12 }}>
+            Publishes the tiers and items as a template. Everyone who opens it
+            gets their own copy to rank, and yours is untouched.
+          </p>
+
+          {templateUrl ? (
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                readOnly
+                aria-label="Template link"
+                data-testid="share-url-template"
+                value={templateUrl}
+                onFocus={(event) => event.target.select()}
+                style={{ ...field, flex: 1 }}
+              />
+              <CopyButton value={templateUrl} testId="template" />
+            </div>
+          ) : (
+            <>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, color: "#8b98a6", fontSize: 12 }}>
+                <input
+                  type="checkbox"
+                  aria-label="List it publicly"
+                  data-testid="share-listed"
+                  checked={listed}
+                  onChange={(event) => setListed(event.target.checked)}
+                />
+                Also list it publicly, so it shows up on browse pages
+              </label>
+              <button
+                type="button"
+                data-testid="share-create-template"
+                onClick={() => onShareTemplate(listed)}
+                disabled={busy}
+                style={{ ...button, opacity: busy ? 0.6 : 1, alignSelf: "flex-start" }}
+              >
+                {busy ? "Working…" : "Create template link"}
+              </button>
+            </>
+          )}
+        </section>
 
         {error ? (
           <span data-testid="share-dialog-error" role="alert" style={{ color: "#fbbf24" }}>

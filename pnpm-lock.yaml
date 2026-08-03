@@ -26,15 +26,27 @@ importers:
 
   apps/mobile:
     dependencies:
+      '@react-native-async-storage/async-storage':
+        specifier: ^3.1.1
+        version: 3.1.1(react-native@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
       '@shopify/react-native-skia':
         specifier: 2.6.2
         version: 2.6.2(patch_hash=c27792b8c3705c7ba972395584b20e247c40819421d24e6ac9469101eb4348a2)(react-native-reanimated@4.5.0(react-native-worklets@0.10.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(react-native@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3))(react-native@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)
+      '@tl/api-client':
+        specifier: workspace:*
+        version: link:../../packages/api-client
+      '@tl/app-core':
+        specifier: workspace:*
+        version: link:../../packages/app-core
       '@tl/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@tl/editor':
         specifier: workspace:*
         version: link:../../packages/editor
+      '@tl/editor-core':
+        specifier: workspace:*
+        version: link:../../packages/editor-core
       expo:
         specifier: ^57.0.1
         version: 57.0.9(@babel/core@7.29.7(supports-color@8.1.1))(@expo/dom-webview@57.0.1)(@expo/metro-runtime@57.0.8)(expo-router@57.0.9)(react-dom@19.2.3(react@19.2.3))(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(react-native@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1))(react-native@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@5.9.3)
@@ -77,6 +89,9 @@ importers:
       '@tl/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client
+      '@tl/app-core':
+        specifier: workspace:*
+        version: link:../../packages/app-core
       '@tl/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -145,6 +160,28 @@ importers:
       vitest:
         specifier: ^3.0.0
         version: 3.2.7(@types/node@20.19.43)(jiti@2.7.0)(jsdom@26.1.0(supports-color@8.1.1))(lightningcss@1.32.0)(supports-color@8.1.1)(terser@5.49.0)(tsx@4.23.1)(yaml@2.9.0)
+
+  packages/app-core:
+    dependencies:
+      '@tl/api-client':
+        specifier: workspace:*
+        version: link:../api-client
+      '@tl/core':
+        specifier: workspace:*
+        version: link:../core
+      '@tl/editor-core':
+        specifier: workspace:*
+        version: link:../editor-core
+      react:
+        specifier: 19.2.3
+        version: 19.2.3
+    devDependencies:
+      '@types/react':
+        specifier: ^19
+        version: 19.2.17
+      typescript:
+        specifier: ~5.9.0
+        version: 5.9.3
 
   packages/core:
     devDependencies:
@@ -1875,6 +1912,12 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
+
+  '@react-native-async-storage/async-storage@3.1.1':
+    resolution: {integrity: sha512-z+PnLz1n6ECKhgoHZHkfc+dijXZEyZnNFSajbtE0NEbsJhmX8x9GlOeiMQIKX2E4DUqPSgfIh4FYBv1M49KgPQ==}
+    peerDependencies:
+      react: 19.2.3
+      react-native: 0.86.0
 
   '@react-native-masked-view/masked-view@0.3.2':
     resolution: {integrity: sha512-XwuQoW7/GEgWRMovOQtX3A4PrXhyaZm0lVUiY8qJDvdngjLms9Cpdck6SmGAUNqQwcj2EadHC1HwL0bEyoa/SQ==}
@@ -3787,6 +3830,9 @@ packages:
   iconv-lite@0.6.3:
     resolution: {integrity: sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==}
     engines: {node: '>=0.10.0'}
+
+  idb@8.0.3:
+    resolution: {integrity: sha512-LtwtVyVYO5BqRvcsKuB2iUMnHwPVByPCXFXOpuU96IZPPoPN6xjOGxZQ74pgSVVLQWtUOYgyeL4GE98BY5D3wg==}
 
   ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
@@ -7249,6 +7295,12 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.17
 
+  '@react-native-async-storage/async-storage@3.1.1(react-native@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)':
+    dependencies:
+      idb: 8.0.3
+      react: 19.2.3
+      react-native: 0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.3)(supports-color@8.1.1)
+
   '@react-native-masked-view/masked-view@0.3.2(react-native@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.0(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.17)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)':
     dependencies:
       react: 19.2.3
@@ -9409,6 +9461,8 @@ snapshots:
   iconv-lite@0.6.3:
     dependencies:
       safer-buffer: 2.1.2
+
+  idb@8.0.3: {}
 
   ignore@5.3.2: {}
 

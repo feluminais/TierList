@@ -17,6 +17,8 @@ export type TierListAction =
    * action and the reducer keeps one branch correct.
    */
   | { type: "row/setTileSize"; rowId: string; tileSize: number | null }
+  /** Whether this tier's label is drawn bold. */
+  | { type: "row/setBold"; rowId: string; bold: boolean }
   | { type: "row/reorder"; rowId: string; toIndex: number }
   | { type: "item/addText"; id: string; label: string }
   | {

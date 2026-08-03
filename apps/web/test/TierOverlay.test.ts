@@ -53,11 +53,12 @@ function mount(d: TierList, onAction: (a: TierListAction) => void, immediate = t
   render(
     createElement(TierOverlay, {
       doc: d,
-      width: WIDTH,
+      layout: layoutBoard(d, { width: WIDTH, trayAddSlot: true }),
       dragging: false,
       immediate,
       onAction,
       onAddRow: vi.fn(),
+      onAddItem: vi.fn(),
     }),
   );
 }
@@ -254,10 +255,14 @@ describe("TierOverlay — the edit button and panel", () => {
       label: "God",
     });
 
-    act(() => fireEvent.click(screen.getAllByTestId("tier-panel-swatch")[3]!));
+    // The colour button opens the picker; the picker is what carries swatches.
+    act(() => fireEvent.click(screen.getByTestId("tier-panel-color")));
+    act(() => fireEvent.click(screen.getAllByTestId("color-swatch")[5]!));
     expect(onAction).toHaveBeenCalledWith(
       expect.objectContaining({ type: "row/recolor", rowId: target.id }),
     );
+    // Picking closes it again.
+    expect(screen.queryByTestId("color-popover")).toBeNull();
 
     act(() => fireEvent.click(screen.getByTestId("tier-panel-remove")));
     expect(onAction).toHaveBeenCalledWith({ type: "row/remove", rowId: target.id });
@@ -507,7 +512,29 @@ describe("TierOverlay — sizing", () => {
     });
   });
 
-  it("the grip obeys resize all too, since the mode outlives the panel", () => {
+  /**
+   * Resize-all belongs to the open panel and dies with it. A mode that
+   * outlived the panel would turn an unrelated tier's grip into a list-wide
+   * control with nothing on screen saying so.
+   */
+  it("the grip obeys resize all while the panel is open", () => {
+    const d = doc();
+    const onAction = vi.fn();
+    const row = openPanelOn(d, GRIP_TIER, onAction);
+
+    act(() => fireEvent.click(screen.getByTestId("tier-panel-resize-all")));
+
+    act(() => fireEvent.mouseEnter(handleFor(row.id)));
+    const grip = screen.getByTestId("tier-resize-grip");
+    act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
+    act(() => grip.dispatchEvent(pointer("pointermove", 120, 120)));
+
+    expect(onAction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "display/setUniformTileSize" }),
+    );
+  });
+
+  it("stops obeying resize all once the panel closes", () => {
     const d = doc();
     const onAction = vi.fn();
     const row = openPanelOn(d, GRIP_TIER, onAction);
@@ -522,7 +549,34 @@ describe("TierOverlay — sizing", () => {
     act(() => grip.dispatchEvent(pointer("pointermove", 120, 120)));
 
     expect(onAction).toHaveBeenLastCalledWith(
-      expect.objectContaining({ type: "display/setUniformTileSize" }),
+      expect.objectContaining({ type: "row/setTileSize", rowId: row.id }),
+    );
+  });
+
+  /**
+   * The case that prompted the scoping: with the box ticked on one tier, the
+   * grip of a *different* tier must still resize only itself.
+   */
+  it("never lets resize all reach a tier other than the open one", () => {
+    const d = doc();
+    const onAction = vi.fn();
+    openPanelOn(d, GRIP_TIER, onAction);
+    act(() => fireEvent.click(screen.getByTestId("tier-panel-resize-all")));
+
+    const other = ordered(d)[4]!;
+    expect(other.id).not.toBe(ordered(d)[GRIP_TIER]!.id);
+
+    act(() => fireEvent.mouseEnter(handleFor(other.id)));
+    // Two grips are mounted: the open tier keeps its affordances while its
+    // panel is up. Take the one belonging to the tier being dragged.
+    const grip = handleFor(other.id).querySelector<HTMLElement>(
+      '[data-testid="tier-resize-grip"]',
+    )!;
+    act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
+    act(() => grip.dispatchEvent(pointer("pointermove", 120, 120)));
+
+    expect(onAction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "row/setTileSize", rowId: other.id }),
     );
   });
 });

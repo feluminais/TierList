@@ -106,6 +106,27 @@ function apply(doc: TierList, action: TierListAction): TierList {
       };
     }
 
+    case "row/setBold": {
+      const row = doc.rows.find((r) => r.id === action.rowId);
+      if (!row) return doc;
+      if ((row.bold ?? false) === action.bold) return doc;
+
+      return {
+        ...doc,
+        rows: doc.rows.map((r) => {
+          if (r.id !== action.rowId) return r;
+          if (!action.bold) {
+            // Deleted rather than set to false, for the reason
+            // `row/setTileSize` documents: the document is stored as JSON, and
+            // absent is the same state as the default.
+            const { bold: _cleared, ...rest } = r;
+            return rest;
+          }
+          return { ...r, bold: true };
+        }),
+      };
+    }
+
     case "row/reorder": {
       const from = doc.rows.findIndex((r) => r.id === action.rowId);
       if (from === -1) return doc;

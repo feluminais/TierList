@@ -96,6 +96,10 @@ export function validateDocument(raw: unknown): string[] {
       if (override !== undefined && !(isFinite_(override) && override > 0)) {
         fail(`rows[${at}].tileSizeOverride must be a positive number when present`);
       }
+      const bold = row["bold"];
+      if (bold !== undefined && typeof bold !== "boolean") {
+        fail(`rows[${at}].bold must be a boolean when present`);
+      }
     });
   }
 

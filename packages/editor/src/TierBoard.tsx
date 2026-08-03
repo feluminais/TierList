@@ -103,7 +103,11 @@ export function TierBoard({ doc, width, layout, drag, images, canvasRef }: TierB
     : 24;
   const tileSize = tileFontSize(doc.display.tileSize);
 
+  // Both weights, always. Hooks cannot run per row, so the board loads each
+  // once and picks per tier at draw time — the same constraint that makes one
+  // font size serve every row.
   const rowFont = useBoardFont(rowSize);
+  const rowFontBold = useBoardFont(rowSize, true);
   const tileFont = useBoardFont(tileSize);
 
   // Skia positions text on its baseline, not its top edge. `ascent` is
@@ -130,6 +134,32 @@ export function TierBoard({ doc, width, layout, drag, images, canvasRef }: TierB
     [board, drag],
   );
   const draggedItem = drag?.phase === "dragging" ? itemsById.get(drag.itemId) : undefined;
+
+  /**
+   * A tier's letter, centred in its colour cell.
+   *
+   * Centred rather than left-aligned because the letter *is* the tier's
+   * identity, and a cell that changes height as its tiles grow keeps the
+   * letter in the same relative place either way. Horizontal centring needs
+   * the text measured — `truncate` bounds the string, and the font then
+   * reports how wide the result actually is, which is the only way to know
+   * where to start drawing it.
+   */
+  const drawRowLabel = (labelRect: GeometryRect, model: { label: string; bold?: boolean }) => {
+    const font = model.bold ? rowFontBold : rowFont;
+    if (!font) return null;
+    const text = truncate(model.label, labelRect.width - 16, rowSize);
+    const width = font.getTextWidth(text);
+    return (
+      <Text
+        x={labelRect.x + (labelRect.width - width) / 2}
+        y={labelRect.y + labelRect.height / 2 + rowBaselineOffset}
+        text={text}
+        font={font}
+        color={ROW_LABEL_TEXT}
+      />
+    );
+  };
 
   /**
    * A tile's image, scaled and offset by `imageDrawRect` so the cropped
@@ -236,15 +266,7 @@ export function TierBoard({ doc, width, layout, drag, images, canvasRef }: TierB
               @tl/core's types, that flag governs item labels only. The row
               label column is collapsed by labelWidth: 0 instead.
             */}
-            {rowFont && model ? (
-              <Text
-                x={row.labelRect.x + 8}
-                y={row.labelRect.y + row.labelRect.height / 2 + rowBaselineOffset}
-                text={truncate(model.label, row.labelRect.width - 16, rowSize)}
-                font={rowFont}
-                color={ROW_LABEL_TEXT}
-              />
-            ) : null}
+            {model ? drawRowLabel(row.labelRect, model) : null}
             {row.tiles.map(drawTile)}
           </Group>
         );

@@ -52,6 +52,15 @@ export interface Row {
   order: number;
   /** Overrides DisplaySettings.tileSize for this row only. */
   tileSizeOverride?: number;
+  /**
+   * Draw this tier's label in the bold weight.
+   *
+   * Optional and absent by default, so no migration is needed: a document
+   * written before this existed reads as not bold, which is what it looked
+   * like. Per tier rather than list-wide because a tier's label is its
+   * identity — emphasising S without emphasising D is the point.
+   */
+  bold?: boolean;
 }
 
 export interface Item {

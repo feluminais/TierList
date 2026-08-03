@@ -1,42 +1,18 @@
 "use client";
 
-import type { TileAspect } from "@tl/core";
 import type { EditorSession } from "@tl/editor-core";
 import Link from "next/link";
-import { useState, type CSSProperties, type FormEvent } from "react";
+import type { CSSProperties } from "react";
 import type { Connection } from "./useApiClient";
-
-const ASPECTS: { value: TileAspect; label: string }[] = [
-  { value: "square", label: "Square" },
-  { value: "portrait", label: "Portrait" },
-  { value: "landscape", label: "Landscape" },
-];
 
 export interface ToolbarProps {
   session: EditorSession;
   connection: Connection;
   onTitleChange: (title: string) => void;
-  /**
-   * The label alone. The id is minted by the caller, because the reducer never
-   * generates ids and this is where that rule reaches the UI — a component that
-   * minted its own would be the one place in the app that could.
-   */
-  onAddItem: (label: string) => void;
   onUndo: () => void;
   onRedo: () => void;
-  /** The file alone. Uploading it and minting the item id both live at the
-   *  call site, for the same reason `onAddItem` only takes a label. */
-  onAddImage: (file: File) => void;
-  uploading: boolean;
+  /** Surfaced here because an upload has no other place to report from. */
   uploadError: string | null;
-  /**
-   * The list-wide tile size, which every row without an override renders at.
-   * Per-tier overrides live in `TierControls`, beside the rest of what acts on
-   * one tier.
-   */
-  tileSize: number;
-  onTileSize: (size: number) => void;
-  onTileAspect: (aspect: TileAspect) => void;
   /** Export handlers. Null while the canvas has not loaded and cannot snapshot. */
   onExportImage: ((format: "png" | "jpg") => void) | null;
   onExportJson: () => void;
@@ -55,29 +31,13 @@ export function Toolbar({
   session,
   connection,
   onTitleChange,
-  onAddItem,
   onUndo,
   onRedo,
-  onAddImage,
-  uploading,
   uploadError,
-  tileSize,
-  onTileSize,
-  onTileAspect,
   onExportImage,
   onExportJson,
   onShare,
 }: ToolbarProps) {
-  const [draft, setDraft] = useState("");
-
-  function submitItem(event: FormEvent) {
-    event.preventDefault();
-    const label = draft.trim();
-    if (!label) return;
-    onAddItem(label);
-    setDraft("");
-  }
-
   const save = saveReadout(session, connection);
 
   return (
@@ -99,69 +59,6 @@ export function Toolbar({
         placeholder="Untitled tier list"
         style={{ ...field, flex: "1 1 220px", fontSize: 16 }}
       />
-
-      <form onSubmit={submitItem} style={{ display: "flex", gap: 6 }}>
-        <input
-          aria-label="New item"
-          data-testid="item-input"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          placeholder="Add an item…"
-          style={{ ...field, width: 160 }}
-        />
-        <button type="submit" data-testid="add-item" style={button(false)}>
-          Add
-        </button>
-      </form>
-
-      <label style={{ ...button(uploading), display: "inline-block", cursor: uploading ? "default" : "pointer" }}>
-        {uploading ? "Uploading…" : "Add image"}
-        <input
-          type="file"
-          data-testid="add-image"
-          accept="image/png,image/jpeg,image/webp"
-          disabled={uploading}
-          style={{ display: "none" }}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            // Cleared so picking the same file twice still fires a change
-            // event — the second pick is otherwise silently ignored.
-            event.target.value = "";
-            if (file) onAddImage(file);
-          }}
-        />
-      </label>
-
-      <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#888" }}>
-        Tile
-        <input
-          aria-label="Tile size"
-          data-testid="tile-size"
-          type="range"
-          min={48}
-          max={200}
-          step={4}
-          value={tileSize}
-          onChange={(event) => onTileSize(Number(event.target.value))}
-        />
-      </label>
-
-      <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#888" }}>
-        Shape
-        <select
-          aria-label="Tile shape"
-          data-testid="tile-aspect"
-          value={session.doc.display.tileAspect}
-          onChange={(event) => onTileAspect(event.target.value as TileAspect)}
-          style={field}
-        >
-          {ASPECTS.map((a) => (
-            <option key={a.value} value={a.value}>
-              {a.label}
-            </option>
-          ))}
-        </select>
-      </label>
 
       <button
         type="button"

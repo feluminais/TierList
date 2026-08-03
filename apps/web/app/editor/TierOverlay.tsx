@@ -5,9 +5,9 @@ import {
   DRAG_HOLD_MS,
   clampTileSize,
   idleRowDrag,
-  layoutBoard,
   rowCaretRect,
   rowDragReduce,
+  type BoardLayout,
   type Rect,
   type RowDragEvent,
   type RowDragState,
@@ -30,6 +30,9 @@ const INSET = 4;
 const EDIT_SIZE = 22;
 /** The corner grip's size, in px. */
 const GRIP_SIZE = 16;
+/** The add-tier tab, tucked into the bottom of the last tier's cell. */
+const ADD_TIER_WIDTH = 44;
+const ADD_TIER_HEIGHT = 18;
 
 /**
  * How a corner drag turns into a tile size.
@@ -79,8 +82,8 @@ function effectiveSizeOf(doc: TierList, rowId: string): number {
 
 export interface TierOverlayProps {
   doc: TierList;
-  /** Must be the width the canvas was drawn at, or the overlay drifts from it. */
-  width: number;
+  /** The layout the canvas was drawn from — shared, never recomputed here. */
+  layout: BoardLayout;
   /** True while a *tile* drag is in flight; tier affordances stand down. */
   dragging: boolean;
   /**
@@ -92,6 +95,8 @@ export interface TierOverlayProps {
   onAction: (action: TierListAction) => void;
   /** The label and colour alone; the id is minted at the call site. */
   onAddRow: (label: string, color: string) => void;
+  /** Opens the sheet that creates an item. */
+  onAddItem: () => void;
   children?: ReactNode;
 }
 
@@ -110,14 +115,14 @@ export interface TierOverlayProps {
  */
 export function TierOverlay({
   doc,
-  width,
+  layout,
   dragging,
   immediate,
   onAction,
   onAddRow,
+  onAddItem,
   children,
 }: TierOverlayProps) {
-  const layout = useMemo(() => layoutBoard(doc, { width }), [doc, width]);
 
   const [hovered, setHovered] = useState<string | null>(null);
   /**
@@ -141,6 +146,10 @@ export function TierOverlay({
    * changed yet — a checkbox that refuses to turn off.
    */
   const [resizeAll, setResizeAll] = useState(false);
+  // Read by `applySize`, which the corner grip calls with whichever tier it
+  // belongs to — a value it must compare against the *currently open* panel.
+  const openRowIdRef = useRef<string | null>(null);
+  openRowIdRef.current = openRowId;
 
   const [rowDrag, setRowDrag] = useState<RowDragState>(idleRowDrag);
   // Written synchronously inside `send`, before `setState`, for the reason
@@ -228,12 +237,21 @@ export function TierOverlay({
     send({ type: "cancel" });
   };
 
-  /** Emits the right action for a size, honouring the resize-all mode. */
+  /**
+   * Emits the right action for a size.
+   *
+   * Resize-all applies **only to the tier whose panel is open**, and only
+   * while it is open. The checkbox lives in that panel and is scoped to it: a
+   * mode that outlived the panel would silently turn an unrelated tier's grip
+   * into a list-wide control, which is a surprise the user has no way to see
+   * coming. Closing the panel clears it.
+   */
   const applySize = useCallback(
     (rowId: string, size: number) => {
       const clamped = clampTileSize(size);
+      const uniform = resizeAll && rowId === openRowIdRef.current;
       onAction(
-        resizeAll
+        uniform
           ? { type: "display/setUniformTileSize", tileSize: clamped }
           : { type: "row/setTileSize", rowId, tileSize: clamped },
       );
@@ -293,6 +311,8 @@ export function TierOverlay({
     ? layout.rows.find((r) => r.rowId === openRow.id)?.labelRect
     : undefined;
 
+  const lastRow = layout.rows[layout.rows.length - 1];
+
   return (
     <div ref={wrapperRef} data-testid="tier-overlay-wrapper" style={wrapperStyle}>
       {children}
@@ -342,7 +362,12 @@ export function TierOverlay({
                     onClick={(event) => {
                       event.stopPropagation();
                       setOpen((current) => {
-                        if (current?.rowId === row.rowId) return null;
+                        // Closing clears the mode with it.
+                        if (current?.rowId === row.rowId) {
+                          setResizeAll(false);
+                          return null;
+                        }
+                        setResizeAll(false);
                         // Measured, not derived from the layout: the panel
                         // opens into the page beside the board, and only the
                         // board's position in the viewport says whether there
@@ -409,6 +434,78 @@ export function TierOverlay({
           />
         ) : null}
 
+        {/*
+          Add a tier from the bottom of the tier column, where the next one
+          will appear — rather than from a bar under the board, which is
+          nowhere near the thing it creates. Inside the last tier's cell so it
+          cannot overlap the tray beneath.
+        */}
+        {lastRow && !dragging ? (
+          <button
+            type="button"
+            data-testid="tier-add"
+            title="Add a tier"
+            aria-label="Add a tier"
+            onClick={() => onAddRow("", PALETTE[doc.rows.length % PALETTE.length]!)}
+            style={{
+              position: "absolute",
+              left: lastRow.labelRect.x + lastRow.labelRect.width / 2 - ADD_TIER_WIDTH / 2,
+              top: lastRow.labelRect.y + lastRow.labelRect.height - ADD_TIER_HEIGHT,
+              width: ADD_TIER_WIDTH,
+              height: ADD_TIER_HEIGHT,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 0,
+              border: "none",
+              borderRadius: `${ADD_TIER_HEIGHT / 2}px ${ADD_TIER_HEIGHT / 2}px 0 0`,
+              background: "rgba(11, 13, 16, 0.55)",
+              color: "#e6edf3",
+              fontSize: 15,
+              lineHeight: 1,
+              cursor: "pointer",
+              pointerEvents: "auto",
+            }}
+          >
+            +
+          </button>
+        ) : null}
+
+        {/*
+          Adding an item starts where the item will appear: the first slot of
+          the tray, which `layoutBoard` reserves so the tiles after it move
+          along rather than sitting underneath.
+        */}
+        {layout.tray.addSlot && !dragging ? (
+          <button
+            type="button"
+            data-testid="add-item"
+            title="Add an item"
+            aria-label="Add an item"
+            onClick={onAddItem}
+            style={{
+              position: "absolute",
+              left: layout.tray.addSlot.x,
+              top: layout.tray.addSlot.y,
+              width: layout.tray.addSlot.width,
+              height: layout.tray.addSlot.height,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "rgba(230, 237, 243, 0.06)",
+              border: "1px dashed rgba(230, 237, 243, 0.28)",
+              borderRadius: 8,
+              color: "#8b98a6",
+              fontSize: Math.max(20, layout.tray.addSlot.width * 0.34),
+              lineHeight: 1,
+              cursor: "pointer",
+              pointerEvents: "auto",
+            }}
+          >
+            +
+          </button>
+        ) : null}
+
         {open && openRow && openLabelRect ? (
           <TierPanel
             row={openRow}
@@ -429,27 +526,22 @@ export function TierOverlay({
             }}
             onRename={(label) => onAction({ type: "row/rename", rowId: openRow.id, label })}
             onRecolor={(color) => onAction({ type: "row/recolor", rowId: openRow.id, color })}
+            onBold={(bold) => onAction({ type: "row/setBold", rowId: openRow.id, bold })}
             onSize={(size) => applySize(openRow.id, size)}
             onRemove={() => {
               onAction({ type: "row/remove", rowId: openRow.id });
+              setResizeAll(false);
               setOpen(null);
             }}
-            onClose={() => setOpen(null)}
+            onClose={() => {
+              setResizeAll(false);
+              setOpen(null);
+            }}
             openRight={open.openRight}
           />
         ) : null}
       </div>
 
-      <button
-        type="button"
-        data-testid="tier-add"
-        onClick={() =>
-          onAddRow("", PALETTE[doc.rows.length % PALETTE.length]!)
-        }
-        style={addButtonStyle}
-      >
-        + Add tier
-      </button>
     </div>
   );
 }
@@ -520,15 +612,3 @@ const overlayStyle: CSSProperties = {
   pointerEvents: "none",
 };
 
-const addButtonStyle: CSSProperties = {
-  marginTop: 8,
-  background: "#171c22",
-  border: "1px dashed #2c3540",
-  borderRadius: 6,
-  color: "#8b98a6",
-  padding: "8px 12px",
-  cursor: "pointer",
-  fontFamily: "system-ui, sans-serif",
-  fontSize: 13,
-  width: "100%",
-};

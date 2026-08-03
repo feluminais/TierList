@@ -45,6 +45,17 @@ export interface LayoutOptions {
   width: number;
   /** Space left outside the board's content on every side, in px. */
   padding?: number;
+  /**
+   * Reserve a tile-sized slot at the front of the tray for an "add" control.
+   *
+   * The layout owns this rather than the caller drawing a button wherever it
+   * likes, for the same reason every other rectangle comes from here: the slot
+   * displaces every tray tile after it, so a caller positioning one
+   * independently would put it on top of the first item. It is returned as
+   * `tray.addSlot` and is deliberately *not* a tile — hit-testing does not
+   * report it, and nothing can be dropped into it.
+   */
+  trayAddSlot?: boolean;
 }
 
 export interface TileBox {
@@ -64,6 +75,11 @@ export interface RowBox {
 
 export interface TrayBox {
   rect: Rect;
+  /**
+   * Where an "add item" control goes, when one was asked for. Sized and
+   * positioned exactly as the tile that would otherwise sit there.
+   */
+  addSlot?: Rect;
   /**
    * Equal to `rect`: the tray has no label column. Present so a consumer can
    * treat a tray and a row alike — hit-testing and drag targeting both want
@@ -107,6 +123,8 @@ function columnsIn(available: number, tileWidth: number, gap: number): number {
 
 interface LaidTiles {
   tiles: TileBox[];
+  /** The reserved leading slot, when one was asked for. */
+  leadingRect?: Rect;
   /**
    * Height of the area the tiles were laid into: a gap above the first line,
    * one below the last, and one between each pair. Never less than a single
@@ -120,29 +138,34 @@ function layoutTiles(
   area: Pick<Rect, "x" | "y" | "width">,
   tile: Size,
   gap: number,
+  /** Slots occupied before the first tile — currently only the tray's add
+   *  control, which takes a tile's place and pushes every item along. */
+  leading = 0,
 ): LaidTiles {
   const columns = columnsIn(area.width, tile.width, gap);
 
-  const tiles = itemIds.map((itemId, position) => {
-    const column = position % columns;
-    const line = Math.floor(position / columns);
-    return {
-      itemId,
-      rect: {
-        x: area.x + gap + column * (tile.width + gap),
-        y: area.y + gap + line * (tile.height + gap),
-        width: tile.width,
-        height: tile.height,
-      },
-    };
+  const slotRect = (position: number): Rect => ({
+    x: area.x + gap + (position % columns) * (tile.width + gap),
+    y: area.y + gap + Math.floor(position / columns) * (tile.height + gap),
+    width: tile.width,
+    height: tile.height,
   });
+
+  const tiles = itemIds.map((itemId, position) => ({
+    itemId,
+    rect: slotRect(position + leading),
+  }));
 
   // At least one line, so an empty location is still a target big enough to
   // hit. This is what makes the height a floor as well as a measurement:
   // one line is exactly `tile.height + gap * 2`, the smallest a location that
   // can hold a tile could sensibly be.
-  const lines = Math.max(1, Math.ceil(itemIds.length / columns));
-  return { tiles, height: lines * (tile.height + gap) + gap };
+  const lines = Math.max(1, Math.ceil((itemIds.length + leading) / columns));
+  return {
+    tiles,
+    height: lines * (tile.height + gap) + gap,
+    leadingRect: leading > 0 ? slotRect(0) : undefined,
+  };
 }
 
 /**
@@ -215,12 +238,19 @@ export function layoutBoard(doc: TierList, options: LayoutOptions): BoardLayout 
   // per-row override has nothing to say about it.
   const trayTile = tileSizeFor(doc.display.tileSize, doc.display.tileAspect);
   const trayArea = { x: padding, y, width: boardWidth };
-  const trayLaid = layoutTiles(byLocation.get(null) ?? [], trayArea, trayTile, gap);
+  const trayLaid = layoutTiles(
+    byLocation.get(null) ?? [],
+    trayArea,
+    trayTile,
+    gap,
+    options.trayAddSlot ? 1 : 0,
+  );
 
   const tray: TrayBox = {
     rect: { x: padding, y, width: boardWidth, height: trayLaid.height },
     tilesRect: { ...trayArea, height: trayLaid.height },
     tiles: trayLaid.tiles,
+    ...(trayLaid.leadingRect ? { addSlot: trayLaid.leadingRect } : null),
   };
 
   // Padding on the bottom as well as the top, matching the horizontal axis

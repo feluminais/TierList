@@ -97,6 +97,13 @@ export default async function SharedListPage({ params }: PageProps) {
   return (
     <main
       style={{
+        // `width` is load-bearing, not decoration. This <main> is a flex item
+        // of a column-direction body, where the cross axis is horizontal — and
+        // an auto margin on the cross axis *disables* `align-items: stretch`,
+        // so without an explicit width the element shrink-wraps its content
+        // and `maxWidth` never binds. The board then renders at whatever the
+        // title happens to be wide.
+        width: "100%",
         maxWidth: 1100,
         margin: "0 auto",
         padding: "24px 16px 48px",

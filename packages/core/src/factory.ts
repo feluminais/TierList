@@ -7,11 +7,11 @@ import {
 } from "./types";
 
 const DEFAULT_ROWS: ReadonlyArray<{ label: string; color: string }> = [
-  { label: "S", color: "#ff7f7f" },
-  { label: "A", color: "#ffbf7f" },
-  { label: "B", color: "#ffff7f" },
-  { label: "C", color: "#bfff7f" },
-  { label: "D", color: "#7fbfff" },
+  { label: "S", color: "#ff4d4d" },
+  { label: "A", color: "#ff9f2e" },
+  { label: "B", color: "#ffd633" },
+  { label: "C", color: "#7ed957" },
+  { label: "D", color: "#39b7ff" },
 ];
 
 export function defaultImageEdit(): ImageEdit {

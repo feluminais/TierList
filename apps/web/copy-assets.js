@@ -28,3 +28,12 @@ const fontSrc = require.resolve(
 );
 
 fs.copyFileSync(fontSrc, path.join(publicFolder, "Inter-Regular.ttf"));
+
+// Bold is a second file, not a style flag: Skia renders the glyphs a font
+// actually contains, and there is no synthetic emboldening to fall back on.
+const boldSrc = require.resolve(
+  "@expo-google-fonts/inter/700Bold/Inter_700Bold.ttf",
+  { paths: [require.resolve("@tl/editor/package.json")] },
+);
+
+fs.copyFileSync(boldSrc, path.join(publicFolder, "Inter-Bold.ttf"));

@@ -2,16 +2,8 @@
 
 import type { Row } from "@tl/core";
 import { MAX_TILE_SIZE, MIN_TILE_SIZE, type Rect } from "@tl/editor-core";
-import { useEffect, useRef, type CSSProperties } from "react";
-
-/**
- * Colours offered as swatches, in the order `createTierList` uses them.
- *
- * A ramp rather than a palette of unrelated hues: tiers are ordinal, and the
- * default set reads as a scale from best to worst. A tier recoloured by hand
- * still looks like it belongs beside the others.
- */
-const SWATCHES = ["#ff7f7f", "#ffbf7f", "#ffff7f", "#bfff7f", "#7fbfff", "#bf9fff"];
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { ColorPopover } from "./ColorPopover";
 
 /** The panel's own width, in px. Fixed so the slide-out distance is known. */
 const PANEL_WIDTH = 236;
@@ -32,6 +24,7 @@ export interface TierPanelProps {
   onResizeAllChange: (resizeAll: boolean) => void;
   onRename: (label: string) => void;
   onRecolor: (color: string) => void;
+  onBold: (bold: boolean) => void;
   onSize: (size: number) => void;
   onRemove: () => void;
   onClose: () => void;
@@ -59,12 +52,15 @@ export function TierPanel({
   onResizeAllChange,
   onRename,
   onRecolor,
+  onBold,
   onSize,
   onRemove,
   onClose,
   openRight,
 }: TierPanelProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // Where the colour button was clicked, so the picker opens on the pointer.
+  const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null);
 
   // Escape closes, from anywhere. The panel sits over a canvas that takes its
   // own pointer events, so a click-catching backdrop would cost the board
@@ -133,37 +129,45 @@ export function TierPanel({
         </button>
       </div>
 
-      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-        {SWATCHES.map((color) => (
-          <button
-            key={color}
-            type="button"
-            aria-label={`Colour ${color}`}
-            data-testid="tier-panel-swatch"
-            onClick={() => onRecolor(color)}
-            style={{
-              width: 24,
-              height: 24,
-              borderRadius: 6,
-              background: color,
-              cursor: "pointer",
-              // The current colour is marked rather than merely looking
-              // selected, so it is legible against its own swatch.
-              border:
-                row.color.toLowerCase() === color.toLowerCase()
-                  ? "2px solid #e6edf3"
-                  : "1px solid #2c3540",
-            }}
-          />
-        ))}
-        <input
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <button
+          type="button"
           aria-label="Tier colour"
           data-testid="tier-panel-color"
-          type="color"
-          value={row.color}
-          onChange={(event) => onRecolor(event.target.value)}
-          style={{ ...field, padding: 2, width: 32, height: 26 }}
+          onClick={(event) =>
+            setPickerAt({ x: event.clientX, y: event.clientY })
+          }
+          style={{
+            width: 34,
+            height: 26,
+            borderRadius: 6,
+            border: "1px solid #3a4450",
+            background: row.color,
+            cursor: "pointer",
+            padding: 0,
+          }}
         />
+        <span style={{ color: "#8b98a6", fontFamily: "monospace" }}>
+          {row.color.toUpperCase()}
+        </span>
+        <button
+          type="button"
+          aria-label="Bold tier label"
+          aria-pressed={row.bold === true}
+          data-testid="tier-panel-bold"
+          title="Draw this tier's letter bold"
+          onClick={() => onBold(row.bold !== true)}
+          style={{
+            ...button,
+            marginLeft: "auto",
+            fontWeight: 800,
+            minWidth: 34,
+            background: row.bold ? "#2b3542" : "#222b35",
+            borderColor: row.bold ? "#3b8beb" : "#2c3540",
+          }}
+        >
+          B
+        </button>
       </div>
 
       <label style={{ display: "flex", alignItems: "center", gap: 8, color: "#8b98a6" }}>
@@ -194,6 +198,15 @@ export function TierPanel({
         />
         Resize all tiers
       </label>
+
+      {pickerAt ? (
+        <ColorPopover
+          value={row.color}
+          origin={pickerAt}
+          onPick={onRecolor}
+          onClose={() => setPickerAt(null)}
+        />
+      ) : null}
 
       <button
         type="button"

@@ -8,13 +8,14 @@ import {
   isFill,
   type TierList,
   type TierListAction,
-  type TileAspect,
 } from "@tl/core";
 import {
   applyAction,
   aspectRatioFor,
   createSession,
   defaultCropFor,
+  layoutBoard,
+  type BoardLayout,
   redoSession,
   saveFailed,
   saveStarted,
@@ -32,6 +33,7 @@ import {
 import { downloadBytes, filenameFor } from "./download";
 import { newId } from "./ids";
 import { EditSheet, type EditCanvasComponent } from "./EditSheet";
+import { NewItemSheet } from "./NewItemSheet";
 import { ShareDialog } from "./ShareDialog";
 import { TierOverlay } from "./TierOverlay";
 import { TileEditOverlay } from "./TileEditButton";
@@ -60,6 +62,7 @@ type BoardProps = {
   onDraggingChange?: (dragging: boolean) => void;
   immediateDrag?: boolean;
   onExporterReady?: (exporter: BoardExporterLike | null) => void;
+  layout?: BoardLayout;
   assetIds?: readonly string[];
   assetUrl?: (assetId: string) => string;
 };
@@ -300,10 +303,6 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
     [session.doc.items, client],
   );
 
-  const onTileSize = useCallback(
-    (tileSize: number) => dispatch({ type: "display/set", patch: { tileSize } }),
-    [dispatch],
-  );
   // Adding a tier is the one tier action that reaches `dispatch` through a
   // callback: it needs an id, and the reducer generates none, so this boundary
   // is where that rule meets the UI. Everything else a tier can have done to
@@ -313,10 +312,6 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
   // step with the reducer.
   const onAddRow = useCallback(
     (label: string, color: string) => dispatch({ type: "row/add", id: newId(), label, color }),
-    [dispatch],
-  );
-  const onTileAspect = useCallback(
-    (tileAspect: TileAspect) => dispatch({ type: "display/set", patch: { tileAspect } }),
     [dispatch],
   );
 
@@ -364,6 +359,8 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
     (code: string) => `${window.location.origin}/l/${code}`,
     [],
   );
+  const [addingItem, setAddingItem] = useState(false);
+
   const sharing = useShare(client, listId, session.doc, ogImage, shareUrlFor);
   const [shareOpen, setShareOpen] = useState(false);
   const openShare = useCallback(() => setShareOpen(true), []);
@@ -429,6 +426,20 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
     return () => observer.disconnect();
   }, []);
 
+  /**
+   * The one layout everything reads.
+   *
+   * The canvas, the tile overlay and the tier overlay all position themselves
+   * in board coordinates, so they must be given the *same* rectangles — and
+   * `trayAddSlot` changes where every tray tile sits, which is exactly the
+   * kind of option that would otherwise be passed to one consumer and not the
+   * others.
+   */
+  const layout = useMemo(
+    () => layoutBoard(session.doc, { width: boardWidth, trayAddSlot: true }),
+    [session.doc, boardWidth],
+  );
+
   return (
     <div ref={shellRef} style={{ width: "100%" }}>
     <div style={{ width: boardWidth, maxWidth: "100%", margin: "0 auto" }}>
@@ -436,21 +447,25 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
         session={session}
         connection={connection}
         onTitleChange={onTitleChange}
-        onAddItem={onAddItem}
         onUndo={undo}
         onRedo={redo}
-        onAddImage={onAddImage}
-        uploading={upload.uploading}
         uploadError={upload.error}
-        tileSize={session.doc.display.tileSize}
-        onTileSize={onTileSize}
-        onTileAspect={onTileAspect}
         onExportImage={exporter ? onExportImage : null}
         onExportJson={onExportJson}
         onShare={client ? openShare : null}
       />
 
       {filling ? <FillBanner placed={progress.placed} total={progress.total} /> : null}
+
+      {addingItem ? (
+        <NewItemSheet
+          onAddImage={onAddImage}
+          onAddText={onAddItem}
+          uploading={upload.uploading}
+          error={upload.error}
+          onClose={() => setAddingItem(false)}
+        />
+      ) : null}
 
       {shareOpen ? (
         <ShareDialog
@@ -498,18 +513,20 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
         // to pointer events everywhere except the one button in it.
         <TierOverlay
           doc={session.doc}
-          width={boardWidth}
+          layout={layout}
           dragging={dragging}
           immediate={pointerFine}
           onAction={dispatch}
           onAddRow={onAddRow}
+          onAddItem={() => setAddingItem(true)}
         >
           {pointerFine ? (
-            <TileEditOverlay doc={session.doc} width={boardWidth} dragging={dragging} onEdit={onTap}>
+            <TileEditOverlay layout={layout} dragging={dragging} onEdit={onTap}>
               <div style={{ touchAction: "none", width: boardWidth }}>
                 <Board
                   doc={session.doc}
                   width={boardWidth}
+                  layout={layout}
                   onAction={dispatch}
                   onDraggingChange={setDragging}
                   immediateDrag
@@ -524,6 +541,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
               <Board
                 doc={session.doc}
                 width={boardWidth}
+                layout={layout}
                 onAction={dispatch}
                 onTap={onTap}
                 onExporterReady={onExporterReady}

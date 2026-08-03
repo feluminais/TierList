@@ -1,5 +1,5 @@
 import type { TierList, TierListAction } from "@tl/core";
-import { layoutBoard } from "@tl/editor-core";
+import { layoutBoard, type BoardLayout } from "@tl/editor-core";
 import type { CanvasRef } from "@shopify/react-native-skia";
 import React, { useEffect, useMemo, useRef } from "react";
 import { View } from "react-native";
@@ -67,6 +67,16 @@ export interface InteractiveBoardProps {
    * Must be a stable reference — it keys the effect below.
    */
   onExporterReady?: (exporter: BoardExporter | null) => void;
+  /**
+   * The layout to render and hit-test against.
+   *
+   * Optional, and computed here when absent. A caller supplies one when it
+   * also draws overlays over the board: everything that positions itself in
+   * board coordinates has to read the *same* layout, or a handle sits where a
+   * tile is not. Recomputing it per consumer from the same inputs works only
+   * until one of them passes a different option.
+   */
+  layout?: BoardLayout;
 }
 
 /**
@@ -94,10 +104,12 @@ export function InteractiveBoard({
   onDraggingChange,
   immediateDrag,
   onExporterReady,
+  layout: providedLayout,
   assetIds = EMPTY_ASSET_IDS,
   assetUrl = emptyAssetUrl,
 }: InteractiveBoardProps) {
-  const layout = useMemo(() => layoutBoard(doc, { width }), [doc, width]);
+  const ownLayout = useMemo(() => layoutBoard(doc, { width }), [doc, width]);
+  const layout = providedLayout ?? ownLayout;
 
   const { drag, handlers } = useBoardGesture({
     layout,

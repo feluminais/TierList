@@ -113,3 +113,58 @@ body {
     }
   }
 }
+
+/*
+ * The colour picker's entrance.
+ *
+ * Scaled out of the point it was opened from — the panel sets its own
+ * `transform-origin` to where the pointer was within it — so the palette
+ * unfolds from under the cursor rather than sliding in from an edge. The
+ * swatches then stagger along the diagonal, which reads as one motion
+ * spreading outward instead of forty arriving at once.
+ *
+ * `fill-mode` is `none` on the panel and `both` on the swatches: the swatches
+ * need their starting state held until their delay elapses, or a staggered
+ * grid flashes fully drawn on the first frame and then animates.
+ */
+@keyframes tl-color-popover-in {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes tl-color-swatch-in {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes tl-color-popover-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes tl-color-swatch-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+}

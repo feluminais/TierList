@@ -48,7 +48,7 @@ function mount(dragging: boolean, onEdit: (itemId: string) => void) {
   render(
     createElement(
       TileEditOverlay,
-      { doc: d, width: WIDTH, dragging, onEdit },
+      { layout, dragging, onEdit },
       createElement("div", {
         "data-testid": "canvas-stub",
         style: { width: WIDTH, height: layout.contentHeight },

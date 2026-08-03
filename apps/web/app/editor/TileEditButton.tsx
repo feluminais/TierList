@@ -1,9 +1,7 @@
 "use client";
 
-import { findTile, hitTest, layoutBoard, type Rect } from "@tl/editor-core";
-import type { TierList } from "@tl/core";
+import { findTile, hitTest, type BoardLayout, type Rect } from "@tl/editor-core";
 import {
-  useMemo,
   useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
@@ -95,11 +93,9 @@ export function TileEditButton({ rect, onEdit }: TileEditButtonProps) {
 }
 
 export interface TileEditOverlayProps {
-  /** The document the canvas beneath is drawing. */
-  doc: TierList;
-  /** Width the canvas was laid out against — must match exactly, or the
-   *  layout this hit-tests against drifts from what is on screen. */
-  width: number;
+  /** The layout the canvas was drawn from. Shared rather than recomputed, so
+   *  a button cannot sit where a tile is not. */
+  layout: BoardLayout;
   /** True while a drag is in flight. The button hides for its duration: see
    *  `InteractiveBoard`'s `onDraggingChange`. */
   dragging: boolean;
@@ -119,10 +115,9 @@ export interface TileEditOverlayProps {
  * Wraps the board canvas and shows an edit button on whichever tile the
  * pointer is over.
  *
- * Hit-testing reuses `layoutBoard(doc, { width })` — the exact call the
- * canvas itself is drawn from — memoized here rather than recomputed per
- * mouse move, and never a second, independently-built layout that could
- * disagree with it.
+ * Hit-testing reads the layout the canvas was drawn from, passed in rather
+ * than rebuilt here — a second layout computed from the same inputs agrees
+ * only until one caller passes a different option.
  *
  * `children` is rendered untouched, and this component adds nothing to its
  * hit-testing surface: only the button itself takes pointer events (see its
@@ -137,8 +132,7 @@ export interface TileEditOverlayProps {
  * style when a `pointerEvents` prop is passed, and `InteractiveBoard` never
  * passes one.
  */
-export function TileEditOverlay({ doc, width, dragging, onEdit, children }: TileEditOverlayProps) {
-  const layout = useMemo(() => layoutBoard(doc, { width }), [doc, width]);
+export function TileEditOverlay({ layout, dragging, onEdit, children }: TileEditOverlayProps) {
   const [hovered, setHovered] = useState<{ itemId: string; rect: Rect } | null>(null);
 
   const onMouseMove = (event: ReactMouseEvent<HTMLDivElement>) => {

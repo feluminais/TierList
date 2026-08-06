@@ -3,6 +3,7 @@
 import { TIER_PALETTE, type TierList, type TierListAction } from "@tl/core";
 import {
   DRAG_HOLD_MS,
+  clampLabelWidth,
   clampTileSize,
   idleRowDrag,
   rowCaretRect,
@@ -24,27 +25,11 @@ import {
 } from "react";
 import { PANEL_WIDTH, TierPanel } from "./TierPanel";
 
-/** Distance from the label cell's edges for the buttons pinned inside it. */
-const INSET = 4;
-/** The edit button's size, in px. Matches a tile's at a comparable scale. */
-const EDIT_SIZE = 22;
 /** The corner grip's size, in px. */
 const GRIP_SIZE = 16;
 /** The add-tier tab, tucked into the bottom of the last tier's cell. */
 const ADD_TIER_WIDTH = 44;
 const ADD_TIER_HEIGHT = 18;
-
-/**
- * How a corner drag turns into a tile size.
- *
- * The mean of the two axes rather than either alone: the grip sits on a corner,
- * so a diagonal pull is the natural motion and moving both ways at once should
- * count once, not twice. A purely vertical or horizontal drag still works, at
- * half rate, which reads as deliberate rather than broken.
- */
-function sizeDelta(dx: number, dy: number): number {
-  return (dx + dy) / 2;
-}
 
 /**
  * Take pointer capture, tolerating a refusal.
@@ -93,6 +78,14 @@ export interface TierOverlayProps {
    */
   immediate: boolean;
   onAction: (action: TierListAction) => void;
+  /**
+   * Dispatches several actions as one edit — one undo step, one revision.
+   *
+   * The corner grip needs it: a diagonal drag changes this tier's tile size
+   * *and* the width of the label column, which are two settings and therefore
+   * two actions, but one thing the user did.
+   */
+  onActions: (actions: readonly TierListAction[]) => void;
   /** The label and colour alone; the id is minted at the call site. */
   onAddRow: (label: string, color: string) => void;
   /** Opens the sheet that creates an item. */
@@ -119,6 +112,7 @@ export function TierOverlay({
   dragging,
   immediate,
   onAction,
+  onActions,
   onAddRow,
   onAddItem,
   children,
@@ -138,18 +132,21 @@ export function TierOverlay({
   const [open, setOpen] = useState<{ rowId: string; openRight: boolean } | null>(null);
   const openRowId = open?.rowId ?? null;
   /**
-   * Whether the size controls drive every tier at once.
+   * Open the panel on a tier, or close it if that tier's panel is already open.
    *
-   * Local rather than derived from the document. "Every row lacks an override"
-   * would derive to the same thing on the frame the box is ticked, and then
-   * un-ticking it would derive straight back to ticked because nothing had
-   * changed yet — a checkbox that refuses to turn off.
+   * The tier itself is the control — there is no separate edit button — so
+   * this is what a click on a tier means, and clicking it again is what closes
+   * it. The direction is measured here rather than derived from the layout,
+   * for the reason `open` documents.
    */
-  const [resizeAll, setResizeAll] = useState(false);
-  // Read by `applySize`, which the corner grip calls with whichever tier it
-  // belongs to — a value it must compare against the *currently open* panel.
-  const openRowIdRef = useRef<string | null>(null);
-  openRowIdRef.current = openRowId;
+  const togglePanel = useCallback((rowId: string, labelX: number) => {
+    setOpen((current) => {
+      if (current?.rowId === rowId) return null;
+      const host = wrapperRef.current?.getBoundingClientRect();
+      const labelPageX = (host?.left ?? 0) + labelX;
+      return { rowId, openRight: labelPageX < PANEL_WIDTH + 16 };
+    });
+  }, []);
 
   const [rowDrag, setRowDrag] = useState<RowDragState>(idleRowDrag);
   // Written synchronously inside `send`, before `setState`, for the reason
@@ -189,6 +186,9 @@ export function TierOverlay({
   };
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  // The open panel's own element, so a press inside it can be told from a
+  // press on the board behind it.
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   const onHandleDown = (rowId: string) => (event: ReactPointerEvent<HTMLDivElement>) => {
     const host = wrapperRef.current;
@@ -221,13 +221,15 @@ export function TierOverlay({
     releasePointer(event.currentTarget, event.pointerId);
     if (!host) return;
     const out = send({ type: "up", at: sample(event, host), layout: layoutRef.current });
-    // Touch has no hover, so a tap is its only way to reach the panel — the
-    // same reasoning that gives a tile `onTap` on a touch device.
-    if (out.tapped && !immediate) {
+    // A press that did not become a drag is a click on the tier, and a click
+    // on the tier is what opens its panel — on a mouse as well as on touch.
+    // `rowDragReduce` reports the tap either way; what differs between the two
+    // is only how a press is promoted to a drag, which it has already decided
+    // by the time this runs.
+    if (out.tapped) {
       const tapped = out.tapped.rowId;
       const label = layoutRef.current.rows.find((r) => r.rowId === tapped)?.labelRect;
-      const labelPageX = host.getBoundingClientRect().left + (label?.x ?? 0);
-      setOpen({ rowId: tapped, openRight: labelPageX < PANEL_WIDTH + 16 });
+      togglePanel(tapped, label?.x ?? 0);
     }
   };
 
@@ -238,33 +240,29 @@ export function TierOverlay({
   };
 
   /**
-   * Emits the right action for a size.
+   * Corner-grip resizing, both ways.
    *
-   * Resize-all applies **only to the tier whose panel is open**, and only
-   * while it is open. The checkbox lives in that panel and is scoped to it: a
-   * mode that outlived the panel would silently turn an unrelated tier's grip
-   * into a list-wide control, which is a surprise the user has no way to see
-   * coming. Closing the panel clears it.
+   * Horizontal travel widens the **label column** and vertical travel changes
+   * this tier's **tile size**, because those are the two things about a tier
+   * that can actually change: a tier spans the whole board, so its own width
+   * is not a free variable — the width of its coloured cell is. Mapping both
+   * axes onto one number, as this used to, meant a horizontal pull only ever
+   * made the row taller and the cell never got wider.
+   *
+   * The label column is one column for every tier, so widening it widens them
+   * all. That is not a compromise: labels that did not line up would not be a
+   * column.
+   *
+   * The size at grab time is held rather than read back each frame, so the
+   * tier follows the pointer's total travel instead of compounding its own
+   * growth into the next frame's delta.
    */
-  const applySize = useCallback(
-    (rowId: string, size: number) => {
-      const clamped = clampTileSize(size);
-      const uniform = resizeAll && rowId === openRowIdRef.current;
-      onAction(
-        uniform
-          ? { type: "display/setUniformTileSize", tileSize: clamped }
-          : { type: "row/setTileSize", rowId, tileSize: clamped },
-      );
-    },
-    [onAction, resizeAll],
-  );
-
-  // Corner-grip resizing. The size at grab time is held rather than read back
-  // each frame, so the tier follows the pointer's total travel instead of
-  // compounding its own growth into the next frame's delta.
-  const gripRef = useRef<{ rowId: string; startSize: number; origin: { x: number; y: number } } | null>(
-    null,
-  );
+  const gripRef = useRef<{
+    rowId: string;
+    startSize: number;
+    startLabelWidth: number;
+    origin: { x: number; y: number };
+  } | null>(null);
 
   const onGripDown = (rowId: string) => (event: ReactPointerEvent<HTMLDivElement>) => {
     event.stopPropagation();
@@ -272,6 +270,7 @@ export function TierOverlay({
     gripRef.current = {
       rowId,
       startSize: effectiveSizeOf(doc, rowId),
+      startLabelWidth: doc.display.labelWidth,
       origin: { x: event.clientX, y: event.clientY },
     };
   };
@@ -280,17 +279,62 @@ export function TierOverlay({
     const grip = gripRef.current;
     if (!grip) return;
     event.stopPropagation();
-    applySize(
-      grip.rowId,
-      grip.startSize +
-        sizeDelta(event.clientX - grip.origin.x, event.clientY - grip.origin.y),
+
+    const tileSize = clampTileSize(grip.startSize + (event.clientY - grip.origin.y));
+    const labelWidth = clampLabelWidth(
+      grip.startLabelWidth + (event.clientX - grip.origin.x),
     );
+
+    // One batch, so a diagonal drag is one undo step rather than two — and so
+    // every frame of it carries the same merge key and coalesces, which two
+    // separate dispatches alternating between two keys would not.
+    onActions([
+      { type: "display/set", patch: { labelWidth } },
+      { type: "row/setTileSize", rowId: grip.rowId, tileSize },
+    ]);
   };
 
   const onGripUp = (event: ReactPointerEvent<HTMLDivElement>) => {
     releasePointer(event.currentTarget, event.pointerId);
     gripRef.current = null;
   };
+
+  /**
+   * A press anywhere that is not the panel closes it.
+   *
+   * On the *wrapper*, not on `window`, and not a full-screen backdrop: the
+   * board beneath takes its own pointer events for the tile drag, and a
+   * backdrop over it would cost every drag while the panel is open.
+   *
+   * The panel and the colour popover are excluded by containment rather than
+   * by stopping propagation inside them, because the popover clamps itself to
+   * the viewport and can therefore sit outside the panel's box while still
+   * being part of it — `contains` follows the DOM, which is what "inside the
+   * panel" actually means.
+   *
+   * The tier cells are excluded too: a press on one is a press on a control
+   * that already decides for itself whether to open, close or start a drag,
+   * and closing here first would make a click on another tier open nothing.
+   *
+   * `pointerdown` rather than `click`, so the panel is gone before whatever
+   * was pressed acts.
+   */
+  useEffect(() => {
+    if (!openRowId) return;
+    const host = wrapperRef.current;
+    if (!host) return;
+
+    const onDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (panelRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest('[data-testid="tier-handle"]')) return;
+      setOpen(null);
+    };
+
+    host.addEventListener("pointerdown", onDown);
+    return () => host.removeEventListener("pointerdown", onDown);
+  }, [openRowId]);
 
   const openRow = openRowId ? doc.rows.find((r) => r.id === openRowId) : undefined;
   // A tier can vanish under an open panel — removed, or an undo reaching past
@@ -350,46 +394,6 @@ export function TierOverlay({
               }}
             >
               {showAffordances ? (
-                <>
-                  <button
-                    type="button"
-                    title="Edit tier"
-                    aria-label="Edit tier"
-                    data-testid="tier-edit-button"
-                    // The handle beneath owns the drag; a click here means the
-                    // panel and nothing else.
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setOpen((current) => {
-                        // Closing clears the mode with it.
-                        if (current?.rowId === row.rowId) {
-                          setResizeAll(false);
-                          return null;
-                        }
-                        setResizeAll(false);
-                        // Measured, not derived from the layout: the panel
-                        // opens into the page beside the board, and only the
-                        // board's position in the viewport says whether there
-                        // is room for it there.
-                        const host = wrapperRef.current?.getBoundingClientRect();
-                        const labelPageX = (host?.left ?? 0) + row.labelRect.x;
-                        return {
-                          rowId: row.rowId,
-                          openRight: labelPageX < PANEL_WIDTH + 16,
-                        };
-                      });
-                    }}
-                    style={editButtonStyle(row.labelRect)}
-                  >
-                    <svg width={EDIT_SIZE * 0.55} height={EDIT_SIZE * 0.55} viewBox="0 0 24 24" aria-hidden="true">
-                      <path
-                        d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25ZM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83Z"
-                        fill="currentColor"
-                      />
-                    </svg>
-                  </button>
-
                   <div
                     role="slider"
                     tabIndex={0}
@@ -413,7 +417,6 @@ export function TierOverlay({
                       />
                     </svg>
                   </div>
-                </>
               ) : null}
             </div>
           );
@@ -508,33 +511,17 @@ export function TierOverlay({
 
         {open && openRow && openLabelRect ? (
           <TierPanel
+            ref={panelRef}
             row={openRow}
             labelRect={openLabelRect}
-            effectiveSize={effectiveSizeOf(doc, openRow.id)}
-            resizeAll={resizeAll}
-            onResizeAllChange={(next) => {
-              setResizeAll(next);
-              // Ticking it equalises immediately, at the size the panel is
-              // showing. A checkbox that changed nothing until some *other*
-              // control moved would read as broken.
-              if (next) {
-                onAction({
-                  type: "display/setUniformTileSize",
-                  tileSize: clampTileSize(effectiveSizeOf(doc, openRow.id)),
-                });
-              }
-            }}
             onRename={(label) => onAction({ type: "row/rename", rowId: openRow.id, label })}
             onRecolor={(color) => onAction({ type: "row/recolor", rowId: openRow.id, color })}
             onBold={(bold) => onAction({ type: "row/setBold", rowId: openRow.id, bold })}
-            onSize={(size) => applySize(openRow.id, size)}
             onRemove={() => {
               onAction({ type: "row/remove", rowId: openRow.id });
-              setResizeAll(false);
               setOpen(null);
             }}
             onClose={() => {
-              setResizeAll(false);
               setOpen(null);
             }}
             openRight={open.openRight}
@@ -552,34 +539,6 @@ export function TierOverlay({
  * document.
  */
 
-
-function editButtonStyle(label: Rect): CSSProperties {
-  return {
-    position: "absolute",
-    right: INSET,
-    top: INSET,
-    width: EDIT_SIZE,
-    height: EDIT_SIZE,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 0,
-    borderRadius: "50%",
-    background: "rgba(11, 13, 16, 0.75)",
-    border: "1px solid rgba(230, 237, 243, 0.4)",
-    color: "#e6edf3",
-    cursor: "pointer",
-    pointerEvents: "auto",
-    // A CSS keyframe rather than a state flip on `requestAnimationFrame`: an
-    // animation runs from the element's own style, and with `fill-mode: none`
-    // the settled state is the element's own — so where animations do not run
-    // the button is visible rather than stuck invisible.
-    animation: "tl-tile-edit-button-in 120ms ease-out",
-    // Silences the unused parameter without loosening the signature: callers
-    // pass the rect so this can grow to scale with the cell.
-    ...(label.width < EDIT_SIZE + INSET * 2 ? { display: "none" } : null),
-  };
-}
 
 function gripStyle(label: Rect): CSSProperties {
   return {

@@ -40,6 +40,24 @@ export function clampTileSize(size: number): number {
   return Math.min(Math.max(Math.round(size), MIN_TILE_SIZE), MAX_TILE_SIZE);
 }
 
+/**
+ * What the tier label column may be widened or narrowed to, in px.
+ *
+ * The floor keeps a letter and its corner grip on screen — below it the column
+ * is a stripe nothing can be grabbed by. The ceiling stops the labels eating
+ * the board: `layoutBoard` already refuses to leave less than `MIN_TILES_WIDTH`
+ * for the tiles, but that is a last resort at render time, and a control that
+ * lets you drag past the point where anything happens feels broken.
+ */
+export const MIN_LABEL_WIDTH = 56;
+export const MAX_LABEL_WIDTH = 320;
+
+/** Clamp a proposed label-column width into the range controls may set. */
+export function clampLabelWidth(width: number): number {
+  if (!Number.isFinite(width)) return MIN_LABEL_WIDTH;
+  return Math.min(Math.max(Math.round(width), MIN_LABEL_WIDTH), MAX_LABEL_WIDTH);
+}
+
 export interface LayoutOptions {
   /** Width available to the whole board, in px. */
   width: number;

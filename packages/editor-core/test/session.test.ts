@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { canRedo, canUndo } from "../src/history";
 import {
   applyAction,
+  applyActions,
   createSession,
   pendingWrite,
   redoSession,
@@ -62,6 +63,160 @@ describe("applyAction", () => {
     session = applyAction(session, { type: "item/addText", id: "i0", label: "a" }, T1);
     session = applyAction(session, { type: "item/addText", id: "i1", label: "b" }, T1);
     expect(undoSession(session, T1).doc.items).toHaveLength(1);
+  });
+});
+
+/**
+ * The tier corner grip is what this exists for: one diagonal drag changes a
+ * row's tile size *and* the width of the label column, which are two settings
+ * and so two actions, but one thing the user did.
+ */
+describe("applyActions", () => {
+  const ROW = () => base().rows[2]!.id;
+
+  /** Deliberately not the same value on both axes, and not the defaults. */
+  function resize(rowId: string, labelWidth: number, tileSize: number): TierListAction[] {
+    return [
+      { type: "display/set", patch: { labelWidth } },
+      { type: "row/setTileSize", rowId, tileSize },
+    ];
+  }
+
+  it("applies every action in the batch", () => {
+    const next = applyActions(saved(), resize(ROW(), 180, 140), T1);
+    expect(next.doc.display.labelWidth).toBe(180);
+    expect(next.doc.rows[2]!.tileSizeOverride).toBe(140);
+  });
+
+  it("is one undo step, and undoes both halves together", () => {
+    const before = saved();
+    const next = applyActions(before, resize(ROW(), 180, 140), T1);
+    const undone = undoSession(next, T1);
+
+    expect(undone.doc.display.labelWidth).toBe(before.doc.display.labelWidth);
+    expect(undone.doc.rows[2]!.tileSizeOverride).toBe(before.doc.rows[2]!.tileSizeOverride);
+    // Nothing left behind: one press of undo returns to where it started.
+    expect(canUndo(undone.history)).toBe(false);
+  });
+
+  /**
+   * A drag is a run of identical batches, one per frame. They have to coalesce
+   * into a single step, exactly as a run of one continuous action does —
+   * otherwise a two-second drag buries the user's earlier work under a hundred
+   * undo steps and, past the history limit, throws it away.
+   */
+  it("coalesces a run of matching batches into one step", () => {
+    let session = saved();
+    for (let frame = 0; frame < 20; frame += 1) {
+      session = applyActions(session, resize(ROW(), 130 + frame, 100 + frame), T1);
+    }
+    expect(session.doc.display.labelWidth).toBe(149);
+
+    const undone = undoSession(session, T1);
+    expect(undone.doc.display.labelWidth).toBe(base().display.labelWidth);
+    expect(canUndo(undone.history)).toBe(false);
+  });
+
+  /**
+   * The merge key names the actions, so a batch of *different* actions is a
+   * different step. Merging them would lose one of the two edits on undo.
+   */
+  it("does not merge a batch into an unrelated one", () => {
+    let session = applyActions(saved(), resize(ROW(), 180, 140), T1);
+    session = applyActions(
+      session,
+      [
+        { type: "row/rename", rowId: ROW(), label: "God" },
+        { type: "row/recolor", rowId: ROW(), color: "#ff0000" },
+      ],
+      T1,
+    );
+
+    const undone = undoSession(session, T1);
+    // The rename and recolour are gone; the resize is still there.
+    expect(undone.doc.rows[2]!.label).toBe(base().rows[2]!.label);
+    expect(undone.doc.display.labelWidth).toBe(180);
+  });
+
+  /**
+   * The key names *every* action, not just the first.
+   *
+   * Resizing one tier and then another produces two batches that start with the
+   * same `display/set` and differ only in which row the second action names. A
+   * key taken from the first action alone would call those the same gesture and
+   * merge them, so one undo would jump back past both — losing a resize the
+   * user never asked to lose.
+   */
+  it("keeps two batches apart when only their later actions differ", () => {
+    const rowA = base().rows[2]!.id;
+    const rowB = base().rows[4]!.id;
+
+    let session = applyActions(saved(), resize(rowA, 180, 140), T1);
+    session = applyActions(session, resize(rowB, 190, 150), T1);
+
+    const undone = undoSession(session, T1);
+    expect(undone.doc.rows[4]!.tileSizeOverride).toBeUndefined();
+    // Back to after the *first* resize, not back to the beginning.
+    expect(undone.doc.rows[2]!.tileSizeOverride).toBe(140);
+    expect(undone.doc.display.labelWidth).toBe(180);
+  });
+
+  /**
+   * A discrete choice inside the batch makes the whole batch discrete, for the
+   * reason `mergeKeyFor` gives: merging two discrete choices loses one of them.
+   */
+  it("refuses to merge a batch containing a discrete action", () => {
+    let session = saved();
+    session = applyActions(
+      session,
+      [{ type: "row/setBold", rowId: ROW(), bold: true }],
+      T1,
+    );
+    session = applyActions(
+      session,
+      [{ type: "row/setBold", rowId: ROW(), bold: false }],
+      T1,
+    );
+
+    // Two steps, not one: undoing once puts the switch back on rather than
+    // jumping past both flips to where it started.
+    expect(undoSession(session, T1).doc.rows[2]!.bold).toBe(true);
+  });
+
+  it("returns the same session when nothing in the batch changed", () => {
+    const session = saved();
+    const next = applyActions(
+      session,
+      [
+        { type: "row/rename", rowId: "nope", label: "x" },
+        { type: "row/recolor", rowId: "nope", color: "#fff" },
+      ],
+      T1,
+    );
+    expect(next).toBe(session);
+  });
+
+  /**
+   * A batch is not all-or-nothing. One axis of a resize hitting its clamp — so
+   * emitting the value it already has — must not stop the other axis moving.
+   */
+  it("applies the rest when one action is a no-op", () => {
+    const next = applyActions(
+      saved(),
+      [
+        { type: "row/rename", rowId: "nope", label: "x" },
+        { type: "display/set", patch: { labelWidth: 180 } },
+      ],
+      T1,
+    );
+    expect(next.doc.display.labelWidth).toBe(180);
+    // One revision for the batch, not one per action that landed.
+    expect(next.doc.revision).toBe(base().revision + 1);
+  });
+
+  it("leaves an empty batch alone", () => {
+    const session = saved();
+    expect(applyActions(session, [], T1)).toBe(session);
   });
 });
 

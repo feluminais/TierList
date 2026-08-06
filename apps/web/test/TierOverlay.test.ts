@@ -1,5 +1,11 @@
 import { createTierList, reduce, type TierList, type TierListAction } from "@tl/core";
-import { layoutBoard } from "@tl/editor-core";
+import {
+  MAX_LABEL_WIDTH,
+  MAX_TILE_SIZE,
+  MIN_LABEL_WIDTH,
+  MIN_TILE_SIZE,
+  layoutBoard,
+} from "@tl/editor-core";
 import { act, createElement } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -50,6 +56,7 @@ function ordered(d: TierList) {
 }
 
 function mount(d: TierList, onAction: (a: TierListAction) => void, immediate = true) {
+  const onActions = vi.fn();
   render(
     createElement(TierOverlay, {
       doc: d,
@@ -57,10 +64,29 @@ function mount(d: TierList, onAction: (a: TierListAction) => void, immediate = t
       dragging: false,
       immediate,
       onAction,
+      onActions,
       onAddRow: vi.fn(),
       onAddItem: vi.fn(),
     }),
   );
+  return onActions;
+}
+
+/** The last batch the grip emitted, as a lookup by action type. */
+function lastBatch(onActions: ReturnType<typeof vi.fn>): Record<string, any> {
+  const calls = onActions.mock.calls;
+  const batch = calls[calls.length - 1]![0] as { type: string }[];
+  return Object.fromEntries(batch.map((action) => [action.type, action]));
+}
+
+/**
+ * Open a tier's panel the way a user does: press and release on the tier
+ * itself, without moving. There is no edit button — the tier *is* the control.
+ */
+function tapTier(rowId: string, at = { x: 40, y: 10 }) {
+  const handle = handleFor(rowId);
+  act(() => handle.dispatchEvent(pointer("pointerdown", at.x, at.y)));
+  act(() => handle.dispatchEvent(pointer("pointerup", at.x, at.y)));
 }
 
 /** The tier handle for a row id. */
@@ -179,62 +205,117 @@ describe("TierOverlay — reorder by dragging a tier", () => {
   });
 });
 
-describe("TierOverlay — the edit button and panel", () => {
-  it("shows no affordances until the tier is hovered", () => {
+describe("TierOverlay — the panel opens from the tier itself", () => {
+  it("shows no grip until the tier is hovered", () => {
     mount(doc(), vi.fn());
-    expect(screen.queryByTestId("tier-edit-button")).toBeNull();
     expect(screen.queryByTestId("tier-resize-grip")).toBeNull();
   });
 
-  it("reveals the edit button and grip on hover", () => {
+  it("reveals the grip on hover", () => {
     const d = doc();
     mount(d, vi.fn());
     act(() => fireEvent.mouseEnter(handleFor(ordered(d)[0]!.id)));
 
-    expect(screen.getByTestId("tier-edit-button")).not.toBeNull();
     expect(screen.getByTestId("tier-resize-grip")).not.toBeNull();
   });
 
-  it("opens the panel for the tier whose button was clicked", () => {
+  /**
+   * There is no edit button any more, on either kind of pointer. A press that
+   * did not become a drag is what opens the panel — and a mouse click is
+   * exactly that, so gating this on touch (as it used to be) would leave a
+   * desktop user with no way in at all.
+   */
+  it("opens the panel for the tier that was clicked, with a mouse", () => {
     const d = doc();
     mount(d, vi.fn());
     const target = ordered(d)[2]!;
 
-    act(() => fireEvent.mouseEnter(handleFor(target.id)));
-    act(() => fireEvent.click(screen.getByTestId("tier-edit-button")));
+    tapTier(target.id);
 
     expect(screen.getByTestId("tier-panel")).not.toBeNull();
     expect(screen.getByTestId<HTMLInputElement>("tier-panel-name").value).toBe(target.label);
   });
 
-  it("closes the panel again when the same button is clicked", () => {
+  it("opens the panel on a touch device too", () => {
+    const d = doc();
+    mount(d, vi.fn(), false);
+    tapTier(ordered(d)[2]!.id);
+    expect(screen.getByTestId("tier-panel")).not.toBeNull();
+  });
+
+  it("closes the panel when the same tier is clicked again", () => {
     const d = doc();
     mount(d, vi.fn());
-    act(() => fireEvent.mouseEnter(handleFor(ordered(d)[0]!.id)));
+    const target = ordered(d)[1]!;
 
-    act(() => fireEvent.click(screen.getByTestId("tier-edit-button")));
+    tapTier(target.id);
     expect(screen.queryByTestId("tier-panel")).not.toBeNull();
-    act(() => fireEvent.click(screen.getByTestId("tier-edit-button")));
+    tapTier(target.id);
     expect(screen.queryByTestId("tier-panel")).toBeNull();
   });
 
   /**
-   * The button sits inside the drag handle, so its press must not also start a
-   * reorder — otherwise opening the panel would arm a gesture that commits on
-   * the way out.
+   * Clicking a *different* tier moves the panel there rather than closing it.
+   * The outside-press listener must therefore not fire first and swallow the
+   * open — which is why it exempts the tier cells.
    */
-  it("clicking the edit button starts no drag", () => {
+  it("moves the panel to another tier when that one is clicked", () => {
     const d = doc();
-    const onAction = vi.fn();
-    mount(d, onAction);
-    act(() => fireEvent.mouseEnter(handleFor(ordered(d)[0]!.id)));
+    mount(d, vi.fn());
+    const first = ordered(d)[1]!;
+    const second = ordered(d)[3]!;
 
-    const button = screen.getByTestId("tier-edit-button");
-    act(() => button.dispatchEvent(pointer("pointerdown", 40, 10)));
-    act(() => button.dispatchEvent(pointer("pointermove", 40, midpointOf(d, 3))));
-    act(() => button.dispatchEvent(pointer("pointerup", 40, midpointOf(d, 3))));
+    tapTier(first.id);
+    expect(screen.getByTestId<HTMLInputElement>("tier-panel-name").value).toBe(first.label);
 
-    expect(onAction).not.toHaveBeenCalled();
+    tapTier(second.id);
+    expect(screen.getByTestId("tier-panel")).not.toBeNull();
+    expect(screen.getByTestId<HTMLInputElement>("tier-panel-name").value).toBe(second.label);
+  });
+
+  it("closes when the press lands anywhere else", () => {
+    const d = doc();
+    mount(d, vi.fn());
+    tapTier(ordered(d)[2]!.id);
+    expect(screen.queryByTestId("tier-panel")).not.toBeNull();
+
+    act(() => {
+      screen
+        .getByTestId("tier-overlay-wrapper")
+        .dispatchEvent(pointer("pointerdown", 600, 600));
+    });
+    expect(screen.queryByTestId("tier-panel")).toBeNull();
+  });
+
+  /**
+   * The whole point of the exemption: the panel exists to be typed into and
+   * clicked on, and a press on its own name field must not close it.
+   */
+  it("stays open when the press lands inside the panel", () => {
+    const d = doc();
+    mount(d, vi.fn());
+    tapTier(ordered(d)[2]!.id);
+
+    act(() => {
+      screen.getByTestId("tier-panel-name").dispatchEvent(pointer("pointerdown", 10, 10));
+    });
+    expect(screen.queryByTestId("tier-panel")).not.toBeNull();
+  });
+
+  /**
+   * The colour popover clamps itself to the viewport, so it can be positioned
+   * outside the panel's own box while still being part of it. Containment in
+   * the DOM is what "inside the panel" means, not overlap on screen.
+   */
+  it("stays open when the press lands in the colour picker", () => {
+    const d = doc();
+    mount(d, vi.fn());
+    tapTier(ordered(d)[2]!.id);
+    act(() => fireEvent.click(screen.getByTestId("tier-panel-color")));
+
+    const swatch = screen.getAllByTestId("color-swatch")[3]!;
+    act(() => swatch.dispatchEvent(pointer("pointerdown", 10, 10)));
+    expect(screen.queryByTestId("tier-panel")).not.toBeNull();
   });
 
   it("renames, recolours and removes the tier the panel is open on", () => {
@@ -243,8 +324,7 @@ describe("TierOverlay — the edit button and panel", () => {
     mount(d, onAction);
     const target = ordered(d)[1]!;
 
-    act(() => fireEvent.mouseEnter(handleFor(target.id)));
-    act(() => fireEvent.click(screen.getByTestId("tier-edit-button")));
+    tapTier(target.id);
 
     act(() => {
       fireEvent.change(screen.getByTestId("tier-panel-name"), { target: { value: "God" } });
@@ -269,6 +349,16 @@ describe("TierOverlay — the edit button and panel", () => {
     expect(screen.queryByTestId("tier-panel")).toBeNull();
   });
 
+  /** Sizing is a gesture on the board, never a control in the panel. */
+  it("offers no size controls", () => {
+    const d = doc();
+    mount(d, vi.fn());
+    tapTier(ordered(d)[2]!.id);
+
+    expect(screen.queryByTestId("tier-panel-size")).toBeNull();
+    expect(screen.queryByTestId("tier-panel-resize-all")).toBeNull();
+  });
+
   /**
    * The panel opens out of the tier towards the page margin, and which side has
    * room is a question about where the *board* sits in the viewport — not about
@@ -285,8 +375,7 @@ describe("TierOverlay — the edit button and panel", () => {
       return { left: 500, top: 0, right: 500 + WIDTH, bottom: 0, width: WIDTH, height: 0, x: 500, y: 0, toJSON() {} } as DOMRect;
     };
     mount(d, vi.fn());
-    act(() => fireEvent.mouseEnter(handleFor(ordered(d)[0]!.id)));
-    act(() => fireEvent.click(screen.getByTestId("tier-edit-button")));
+    tapTier(ordered(d)[0]!.id);
     // Placed to the left of the label cell, which starts at board x 0, so its
     // own left is negative — out into the page margin beside the board.
     expect(Number.parseFloat(screen.getByTestId("tier-panel").style.left)).toBeLessThan(0);
@@ -298,8 +387,7 @@ describe("TierOverlay — the edit button and panel", () => {
       return { left: 0, top: 0, right: WIDTH, bottom: 0, width: WIDTH, height: 0, x: 0, y: 0, toJSON() {} } as DOMRect;
     };
     mount(d, vi.fn());
-    act(() => fireEvent.mouseEnter(handleFor(ordered(d)[0]!.id)));
-    act(() => fireEvent.click(screen.getByTestId("tier-edit-button")));
+    tapTier(ordered(d)[0]!.id);
     // Placed past the label cell's right edge instead.
     expect(Number.parseFloat(screen.getByTestId("tier-panel").style.left)).toBeGreaterThan(0);
     expect(screen.getByTestId("tier-panel").style.animation).toContain("tl-tier-panel-in-right");
@@ -310,8 +398,7 @@ describe("TierOverlay — the edit button and panel", () => {
   it("closes on Escape", () => {
     const d = doc();
     mount(d, vi.fn());
-    act(() => fireEvent.mouseEnter(handleFor(ordered(d)[0]!.id)));
-    act(() => fireEvent.click(screen.getByTestId("tier-edit-button")));
+    tapTier(ordered(d)[0]!.id);
 
     act(() => {
       fireEvent.keyDown(window, { key: "Escape" });
@@ -320,38 +407,7 @@ describe("TierOverlay — the edit button and panel", () => {
   });
 });
 
-describe("TierOverlay — sizing", () => {
-  function openPanelOn(d: TierList, index: number, onAction: (a: TierListAction) => void) {
-    mount(d, onAction);
-    const row = ordered(d)[index]!;
-    act(() => fireEvent.mouseEnter(handleFor(row.id)));
-    act(() => fireEvent.click(screen.getByTestId("tier-edit-button")));
-    return row;
-  }
-
-  it("the panel slider resizes only its own tier", () => {
-    const d = doc();
-    const onAction = vi.fn();
-    const row = openPanelOn(d, 2, onAction);
-
-    act(() => {
-      fireEvent.change(screen.getByTestId("tier-panel-size"), { target: { value: "150" } });
-    });
-
-    expect(onAction).toHaveBeenCalledWith({
-      type: "row/setTileSize",
-      rowId: row.id,
-      tileSize: 150,
-    });
-  });
-
-  it("shows the tier's own size, not the list-wide one, when it has an override", () => {
-    const d = doc();
-    // Index 1 carries a 200px override.
-    openPanelOn(d, 1, vi.fn());
-    expect(screen.getByTestId("tier-panel-size-value").textContent).toBe("200");
-  });
-
+describe("TierOverlay — the corner grip resizes both ways", () => {
   /**
    * Never the first tier, anywhere in this block.
    *
@@ -362,101 +418,124 @@ describe("TierOverlay — sizing", () => {
    */
   const GRIP_TIER = 2;
 
-  it("resizes the tier it belongs to, not the first one", () => {
-    const d = doc();
-    const onAction = vi.fn();
-    const row = ordered(d)[3]!;
-    expect(row.id).not.toBe(ordered(d)[0]!.id);
-
-    mount(d, onAction);
+  function gripOn(d: TierList, index: number, onAction = vi.fn()) {
+    const row = ordered(d)[index]!;
+    const onActions = mount(d, onAction, true);
     act(() => fireEvent.mouseEnter(handleFor(row.id)));
-    const grip = screen.getByTestId("tier-resize-grip");
+    const grip = handleFor(row.id).querySelector<HTMLElement>(
+      '[data-testid="tier-resize-grip"]',
+    )!;
+    return { row, grip, onActions, onAction };
+  }
 
-    act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
-    act(() => grip.dispatchEvent(pointer("pointermove", 130, 130)));
-
-    const last = onAction.mock.calls[onAction.mock.calls.length - 1]![0] as {
-      rowId: string;
-    };
-    expect(last.rowId).toBe(row.id);
-  });
-
-  it("starts from the tier's own size, not the list-wide one", () => {
+  /**
+   * The bug this was rebuilt for: both axes fed one number, so a horizontal
+   * pull only ever made the row taller and the label cell never widened.
+   *
+   * The two deltas are deliberately different, and the tier under test carries
+   * its own size override — so a grip that swapped the axes, or that read the
+   * list-wide size instead, lands on a different number than a correct one.
+   */
+  it("maps horizontal travel to the label column and vertical to the tier", () => {
     const d = doc();
-    const onAction = vi.fn();
-    // Index 1 carries a 200px override while the list-wide size is 96.
-    const row = ordered(d)[1]!;
+    const { row, grip, onActions } = gripOn(d, 1);
     expect(row.tileSizeOverride).toBe(200);
 
-    mount(d, onAction);
-    act(() => fireEvent.mouseEnter(handleFor(row.id)));
-    const grip = screen.getByTestId("tier-resize-grip");
-
     act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
-    act(() => grip.dispatchEvent(pointer("pointermove", 120, 120)));
+    // Different deltas on the two axes, and neither reaches a clamp: a grip
+    // that transposed them would land on the other number.
+    act(() => grip.dispatchEvent(pointer("pointermove", 130, 120)));
 
-    expect(onAction).toHaveBeenLastCalledWith({
+    const batch = lastBatch(onActions);
+    expect(batch["display/set"]).toEqual({
+      type: "display/set",
+      patch: { labelWidth: d.display.labelWidth + 30 },
+    });
+    expect(batch["row/setTileSize"]).toEqual({
       type: "row/setTileSize",
       rowId: row.id,
       tileSize: 220,
     });
   });
 
-  it("clamps a size beyond the allowed range", () => {
+  it("moves only the axis that moved", () => {
     const d = doc();
-    const onAction = vi.fn();
-    const row = openPanelOn(d, GRIP_TIER, onAction);
-    // The range input clamps its own value, so drive the grip instead, which
-    // takes an unbounded pointer delta.
-    act(() => fireEvent.mouseEnter(handleFor(row.id)));
-    const grip = screen.getByTestId("tier-resize-grip");
+    const { grip, onActions } = gripOn(d, GRIP_TIER);
+
+    act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
+    act(() => grip.dispatchEvent(pointer("pointermove", 100, 160)));
+
+    const batch = lastBatch(onActions);
+    expect(batch["display/set"].patch.labelWidth).toBe(d.display.labelWidth);
+    expect(batch["row/setTileSize"].tileSize).toBe(d.display.tileSize + 60);
+  });
+
+  /**
+   * One gesture, one undo step. Two dispatches would be two steps, and a run of
+   * them alternating between two merge keys would coalesce into neither — which
+   * is why the grip emits a batch rather than calling `onAction` twice.
+   */
+  it("emits one batch per move, and never a bare action", () => {
+    const d = doc();
+    const { grip, onActions, onAction } = gripOn(d, GRIP_TIER);
+
+    act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
+    act(() => grip.dispatchEvent(pointer("pointermove", 120, 120)));
+    act(() => grip.dispatchEvent(pointer("pointermove", 140, 140)));
+
+    expect(onActions).toHaveBeenCalledTimes(2);
+    expect(onAction).not.toHaveBeenCalled();
+    for (const [batch] of onActions.mock.calls) {
+      expect(batch.map((a: { type: string }) => a.type)).toEqual([
+        "display/set",
+        "row/setTileSize",
+      ]);
+    }
+  });
+
+  it("resizes the tier it belongs to, not the first one", () => {
+    const d = doc();
+    const { row, grip, onActions } = gripOn(d, 3);
+    expect(row.id).not.toBe(ordered(d)[0]!.id);
+
+    act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
+    act(() => grip.dispatchEvent(pointer("pointermove", 130, 130)));
+
+    expect(lastBatch(onActions)["row/setTileSize"].rowId).toBe(row.id);
+  });
+
+  it("measures from where the drag began, not from the previous frame", () => {
+    const d = doc();
+    const { grip, onActions } = gripOn(d, GRIP_TIER);
+
+    act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
+    act(() => grip.dispatchEvent(pointer("pointermove", 140, 140)));
+    expect(lastBatch(onActions)["row/setTileSize"].tileSize).toBe(d.display.tileSize + 40);
+
+    act(() => grip.dispatchEvent(pointer("pointermove", 160, 160)));
+    expect(lastBatch(onActions)["row/setTileSize"].tileSize).toBe(d.display.tileSize + 60);
+  });
+
+  it("clamps both axes beyond their allowed ranges", () => {
+    const d = doc();
+    const { grip, onActions } = gripOn(d, GRIP_TIER);
 
     act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
     act(() => grip.dispatchEvent(pointer("pointermove", 9000, 9000)));
-
-    const last = onAction.mock.calls[onAction.mock.calls.length - 1]![0] as {
-      tileSize: number;
-    };
-    expect(last.tileSize).toBe(240);
+    let batch = lastBatch(onActions);
+    expect(batch["row/setTileSize"].tileSize).toBe(MAX_TILE_SIZE);
+    expect(batch["display/set"].patch.labelWidth).toBe(MAX_LABEL_WIDTH);
 
     act(() => grip.dispatchEvent(pointer("pointermove", -9000, -9000)));
-    const low = onAction.mock.calls[onAction.mock.calls.length - 1]![0] as { tileSize: number };
-    expect(low.tileSize).toBe(48);
-  });
-
-  it("the corner grip resizes its own tier, and measures from where the drag began", () => {
-    const d = doc();
-    const onAction = vi.fn();
-    const row = ordered(d)[GRIP_TIER]!;
-    mount(d, onAction);
-    act(() => fireEvent.mouseEnter(handleFor(row.id)));
-    const grip = screen.getByTestId("tier-resize-grip");
-
-    act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
-    // +40 on both axes; the mean of the two is +40.
-    act(() => grip.dispatchEvent(pointer("pointermove", 140, 140)));
-
-    expect(onAction).toHaveBeenLastCalledWith({
-      type: "row/setTileSize",
-      rowId: row.id,
-      tileSize: d.display.tileSize + 40,
-    });
-
-    // A second move is measured from the press, not compounded onto the first.
-    act(() => grip.dispatchEvent(pointer("pointermove", 160, 160)));
-    expect(onAction).toHaveBeenLastCalledWith({
-      type: "row/setTileSize",
-      rowId: row.id,
-      tileSize: d.display.tileSize + 60,
-    });
+    batch = lastBatch(onActions);
+    expect(batch["row/setTileSize"].tileSize).toBe(MIN_TILE_SIZE);
+    expect(batch["display/set"].patch.labelWidth).toBe(MIN_LABEL_WIDTH);
   });
 
   it("grip drags do not start a reorder", () => {
     const d = doc();
     const onAction = vi.fn();
-    mount(d, onAction);
-    act(() => fireEvent.mouseEnter(handleFor(ordered(d)[GRIP_TIER]!.id)));
-    const grip = screen.getByTestId("tier-resize-grip");
+    const { grip } = gripOn(d, GRIP_TIER, onAction);
 
     act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
     act(() => grip.dispatchEvent(pointer("pointermove", 140, 400)));
@@ -468,115 +547,19 @@ describe("TierOverlay — sizing", () => {
   });
 
   /**
-   * The grip sits inside the drag handle, so its press must not reach it. On a
-   * touch device a press that arms the handle and then releases is reported as
-   * a *tap*, which opens the panel — so a grip drag would end with the panel
-   * flying open over the tier the user was resizing. Only a touch mount can
-   * catch this: with a precise pointer a tap opens nothing.
+   * The grip sits inside the tier cell, and a press that arms the cell and then
+   * releases is a *tap* — which now opens the panel on either kind of pointer.
+   * So a grip drag that reached the cell would end with the panel flying open
+   * over the tier the user was resizing.
    */
-  it("a grip drag on a touch device does not open the panel", () => {
+  it("a grip drag does not open the panel", () => {
     const d = doc();
-    mount(d, vi.fn(), false);
-    act(() => fireEvent.mouseEnter(handleFor(ordered(d)[GRIP_TIER]!.id)));
-    const grip = screen.getByTestId("tier-resize-grip");
+    const { grip } = gripOn(d, GRIP_TIER);
 
     act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
     act(() => grip.dispatchEvent(pointer("pointermove", 130, 130)));
     act(() => grip.dispatchEvent(pointer("pointerup", 130, 130)));
 
     expect(screen.queryByTestId("tier-panel")).toBeNull();
-  });
-
-  /**
-   * Ticking the box equalises immediately, at the size the panel is showing. A
-   * checkbox that changed nothing until some other control moved would read as
-   * broken.
-   */
-  it("resize all equalises on being ticked, and redirects the slider", () => {
-    const d = doc();
-    const onAction = vi.fn();
-    openPanelOn(d, 1, onAction);
-
-    act(() => fireEvent.click(screen.getByTestId("tier-panel-resize-all")));
-    expect(onAction).toHaveBeenLastCalledWith({
-      type: "display/setUniformTileSize",
-      tileSize: 200,
-    });
-
-    act(() => {
-      fireEvent.change(screen.getByTestId("tier-panel-size"), { target: { value: "120" } });
-    });
-    expect(onAction).toHaveBeenLastCalledWith({
-      type: "display/setUniformTileSize",
-      tileSize: 120,
-    });
-  });
-
-  /**
-   * Resize-all belongs to the open panel and dies with it. A mode that
-   * outlived the panel would turn an unrelated tier's grip into a list-wide
-   * control with nothing on screen saying so.
-   */
-  it("the grip obeys resize all while the panel is open", () => {
-    const d = doc();
-    const onAction = vi.fn();
-    const row = openPanelOn(d, GRIP_TIER, onAction);
-
-    act(() => fireEvent.click(screen.getByTestId("tier-panel-resize-all")));
-
-    act(() => fireEvent.mouseEnter(handleFor(row.id)));
-    const grip = screen.getByTestId("tier-resize-grip");
-    act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
-    act(() => grip.dispatchEvent(pointer("pointermove", 120, 120)));
-
-    expect(onAction).toHaveBeenLastCalledWith(
-      expect.objectContaining({ type: "display/setUniformTileSize" }),
-    );
-  });
-
-  it("stops obeying resize all once the panel closes", () => {
-    const d = doc();
-    const onAction = vi.fn();
-    const row = openPanelOn(d, GRIP_TIER, onAction);
-
-    act(() => fireEvent.click(screen.getByTestId("tier-panel-resize-all")));
-    act(() => fireEvent.click(screen.getByTestId("tier-panel-close")));
-    expect(screen.queryByTestId("tier-panel")).toBeNull();
-
-    act(() => fireEvent.mouseEnter(handleFor(row.id)));
-    const grip = screen.getByTestId("tier-resize-grip");
-    act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
-    act(() => grip.dispatchEvent(pointer("pointermove", 120, 120)));
-
-    expect(onAction).toHaveBeenLastCalledWith(
-      expect.objectContaining({ type: "row/setTileSize", rowId: row.id }),
-    );
-  });
-
-  /**
-   * The case that prompted the scoping: with the box ticked on one tier, the
-   * grip of a *different* tier must still resize only itself.
-   */
-  it("never lets resize all reach a tier other than the open one", () => {
-    const d = doc();
-    const onAction = vi.fn();
-    openPanelOn(d, GRIP_TIER, onAction);
-    act(() => fireEvent.click(screen.getByTestId("tier-panel-resize-all")));
-
-    const other = ordered(d)[4]!;
-    expect(other.id).not.toBe(ordered(d)[GRIP_TIER]!.id);
-
-    act(() => fireEvent.mouseEnter(handleFor(other.id)));
-    // Two grips are mounted: the open tier keeps its affordances while its
-    // panel is up. Take the one belonging to the tier being dragged.
-    const grip = handleFor(other.id).querySelector<HTMLElement>(
-      '[data-testid="tier-resize-grip"]',
-    )!;
-    act(() => grip.dispatchEvent(pointer("pointerdown", 100, 100)));
-    act(() => grip.dispatchEvent(pointer("pointermove", 120, 120)));
-
-    expect(onAction).toHaveBeenLastCalledWith(
-      expect.objectContaining({ type: "row/setTileSize", rowId: other.id }),
-    );
   });
 });

@@ -1,8 +1,15 @@
 "use client";
 
 import type { Row } from "@tl/core";
-import { MAX_TILE_SIZE, MIN_TILE_SIZE, type Rect } from "@tl/editor-core";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import type { Rect } from "@tl/editor-core";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type CSSProperties,
+  type Ref,
+} from "react";
 import { ColorPopover } from "./ColorPopover";
 
 /** The panel's own width, in px. Fixed so the slide-out distance is known. */
@@ -12,53 +19,48 @@ export interface TierPanelProps {
   row: Row;
   /** The tier's label cell, in board coordinates — what the panel anchors to. */
   labelRect: Rect;
-  /** The size the tier renders at now, override or list-wide. */
-  effectiveSize: number;
-  /**
-   * Whether the size control drives every tier at once.
-   *
-   * Held by the overlay rather than here, because the corner grip obeys it too
-   * and a mode that lived in the panel would not exist while the panel is shut.
-   */
-  resizeAll: boolean;
-  onResizeAllChange: (resizeAll: boolean) => void;
   onRename: (label: string) => void;
   onRecolor: (color: string) => void;
   onBold: (bold: boolean) => void;
-  onSize: (size: number) => void;
   onRemove: () => void;
   onClose: () => void;
   /** True when there is nowhere to the left to open into. */
   openRight: boolean;
+  /**
+   * The panel's own element, so the overlay can tell a press inside it from a
+   * press on the board behind — which is what decides whether the panel closes.
+   */
+  ref?: Ref<HTMLDivElement>;
 }
 
 /**
- * The controls for one tier, opening out of the tier's own colour cell.
+ * Naming and colouring one tier, opening out of the tier's own colour cell.
  *
- * Everything that acts on a single tier lives here — the board is the only
- * place tiers are edited, so there is no second control elsewhere to drift out
- * of step with this one. Reordering is absent by design: a tier is moved by
- * dragging it, which is the same gesture its tiles already use.
+ * Deliberately only those two, plus removal. The other two things a tier can
+ * have done to it are **gestures on the board itself** — dragging it to
+ * reorder, dragging its corner to resize — and a panel control that duplicated
+ * a gesture would be a second way to do the same thing, drifting out of step
+ * with the first and cluttering the panel that exists for what a gesture
+ * cannot express: a name and a colour.
  *
  * A DOM panel rather than something drawn on the canvas: it holds a colour
- * input, a slider and a text field, none of which Skia can render or take
- * input for.
+ * input and a text field, neither of which Skia can render or take input for.
  */
 export function TierPanel({
   row,
   labelRect,
-  effectiveSize,
-  resizeAll,
-  onResizeAllChange,
   onRename,
   onRecolor,
   onBold,
-  onSize,
   onRemove,
   onClose,
   openRight,
+  ref,
 }: TierPanelProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // Handed out as well as kept: this component needs it to move focus, and the
+  // overlay needs it to decide what an outside press is.
+  useImperativeHandle(ref, () => panelRef.current!, []);
   // Where the colour button was clicked, so the picker opens on the pointer.
   const [pickerAt, setPickerAt] = useState<{ x: number; y: number } | null>(null);
 
@@ -169,35 +171,6 @@ export function TierPanel({
           B
         </button>
       </div>
-
-      <label style={{ display: "flex", alignItems: "center", gap: 8, color: "#8b98a6" }}>
-        Size
-        <input
-          aria-label="Tier tile size"
-          data-testid="tier-panel-size"
-          type="range"
-          min={MIN_TILE_SIZE}
-          max={MAX_TILE_SIZE}
-          step={4}
-          value={effectiveSize}
-          onChange={(event) => onSize(Number(event.target.value))}
-          style={{ flex: 1 }}
-        />
-        <span data-testid="tier-panel-size-value" style={{ width: 30, textAlign: "right" }}>
-          {effectiveSize}
-        </span>
-      </label>
-
-      <label style={{ display: "flex", alignItems: "center", gap: 8, color: "#8b98a6" }}>
-        <input
-          type="checkbox"
-          aria-label="Resize all tiers"
-          data-testid="tier-panel-resize-all"
-          checked={resizeAll}
-          onChange={(event) => onResizeAllChange(event.target.checked)}
-        />
-        Resize all tiers
-      </label>
 
       {pickerAt ? (
         <ColorPopover

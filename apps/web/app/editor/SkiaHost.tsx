@@ -12,6 +12,7 @@ import {
 } from "@tl/core";
 import {
   applyAction,
+  applyActions,
   aspectRatioFor,
   createSession,
   defaultCropFor,
@@ -248,6 +249,17 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
   // changed nothing.
   const dispatch = useCallback((action: TierListAction) => {
     setSession((current) => applyAction(current, action, now()));
+  }, []);
+
+  /**
+   * Several actions as one edit — one undo step, one revision.
+   *
+   * The tier corner grip is what needs it: a diagonal drag moves two settings
+   * at once, and dispatching them separately would put two steps on the undo
+   * stack for one gesture and stop the run coalescing at all.
+   */
+  const dispatchAll = useCallback((actions: readonly TierListAction[]) => {
+    setSession((current) => applyActions(current, actions, now()));
   }, []);
 
   const undo = useCallback(() => {
@@ -569,6 +581,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
           dragging={dragging}
           immediate={pointerFine}
           onAction={dispatch}
+          onActions={dispatchAll}
           onAddRow={onAddRow}
           onAddItem={() => setAddingItem(true)}
         >

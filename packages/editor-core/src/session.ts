@@ -121,6 +121,46 @@ export function applyAction(
 }
 
 /**
+ * Apply several actions as **one** edit.
+ *
+ * Exists because some single gestures move two things at once. Dragging a
+ * tier's corner changes that tier's tile size *and* the width of the label
+ * column, and those are two actions because they are two different settings —
+ * but they are one thing the user did, and `applyAction` twice would put two
+ * steps on the undo stack for one drag.
+ *
+ * The batch's merge key is its actions' keys joined, so a run of identical
+ * batches — every frame of that drag — coalesces into a single step exactly as
+ * a run of one continuous action does. A batch containing anything discrete
+ * (its own key is null) is not merged at all, for the reason `mergeKeyFor`
+ * gives: merging two discrete choices loses one of them.
+ *
+ * Returns the same session when *nothing* changed, mirroring `applyAction`.
+ * Actions that individually no-op are simply skipped; a batch is not all-or-
+ * nothing, because the axis of a resize that has already hit its clamp should
+ * not stop the other axis from moving.
+ */
+export function applyActions(
+  session: EditorSession,
+  actions: readonly TierListAction[],
+  now: string,
+): EditorSession {
+  let doc = session.doc;
+  for (const action of actions) doc = reduce(doc, action, now);
+  if (doc === session.doc) return session;
+
+  const keys = actions.map(mergeKeyFor);
+  const mergeKey = keys.every((key) => key !== null) ? keys.join("|") : null;
+
+  return derive(
+    doc,
+    record(session.history, session.doc, mergeKey),
+    session.syncedRevision,
+    editedStatus(session.status),
+  );
+}
+
+/**
  * What an edit does to the save status.
  *
  * A save in flight keeps its status: the write already sent is still

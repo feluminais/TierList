@@ -72,11 +72,17 @@ function mount(d: TierList, onAction: (a: TierListAction) => void, immediate = t
   return onActions;
 }
 
+/** The two actions a corner-grip move emits, by type. */
+interface GripBatch {
+  "display/set": { type: "display/set"; patch: { labelWidth: number } };
+  "row/setTileSize": { type: "row/setTileSize"; rowId: string; tileSize: number };
+}
+
 /** The last batch the grip emitted, as a lookup by action type. */
-function lastBatch(onActions: ReturnType<typeof vi.fn>): Record<string, any> {
+function lastBatch(onActions: ReturnType<typeof vi.fn>): GripBatch {
   const calls = onActions.mock.calls;
   const batch = calls[calls.length - 1]![0] as { type: string }[];
-  return Object.fromEntries(batch.map((action) => [action.type, action]));
+  return Object.fromEntries(batch.map((action) => [action.type, action])) as unknown as GripBatch;
 }
 
 /**

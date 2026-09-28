@@ -34,10 +34,10 @@ export function BrowseGrid({
           <Link href={`/l/${result.code}`} style={card} data-testid="browse-card">
             <span style={thumb}>
               {result.ogAssetId ? (
-                // eslint-disable-next-line @next/next/no-img-element -- the
-                // asset endpoint is already immutable and cache-forever, and
-                // routing it through a second optimiser costs a page whose
-                // whole point is opening fast.
+                // A plain <img>: the asset endpoint is already immutable and
+                // cache-forever, and routing it through a second optimiser
+                // costs a page whose whole point is opening fast.
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={assetUrl(result.ogAssetId)}
                   alt=""

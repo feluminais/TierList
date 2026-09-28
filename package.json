@@ -9,11 +9,11 @@
     "lint": "turbo run lint"
   },
   "devDependencies": {
-    "turbo": "^2.5.0",
+    "turbo": "^2.11.4",
     "typescript": "~5.9.0"
   },
   "packageManager": "pnpm@11.18.0",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   }
 }

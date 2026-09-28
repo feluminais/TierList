@@ -18,21 +18,21 @@
     "@tl/core": "workspace:*",
     "@tl/editor": "workspace:*",
     "@tl/editor-core": "workspace:*",
-    "next": "16.2.12",
+    "next": "16.3.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native-web": "^0.21.2"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
+    "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/react": "^16.3.2",
-    "@types/node": "^20",
+    "@types/node": "^24.19.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.12",
+    "eslint-config-next": "16.3.6",
     "jsdom": "^26.0.0",
-    "tailwindcss": "^4",
+    "tailwindcss": "^4.3.3",
     "typescript": "~5.9.0",
     "vitest": "^3.0.0"
   }

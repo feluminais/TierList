@@ -1,8 +1,8 @@
 "use client";
 
 import { ApiError, type Client } from "@tl/api-client";
-import { pendingWrite, type EditorSession } from "@tl/editor-core";
-import { useEffect, useRef } from "react";
+import { pendingWrite, type EditorSession, type PendingWrite } from "@tl/editor-core";
+import { useCallback, useEffect, useRef } from "react";
 
 /** How long the document must sit still before a save is attempted. */
 export const AUTOSAVE_DEBOUNCE_MS = 800;
@@ -30,6 +30,16 @@ export interface AutosaveTimings {
   retryMs?: number;
 }
 
+export interface Autosave {
+  /**
+   * Send the save that is waiting on its timer, now, with `keepalive` so the
+   * request can outlive the page. For the moment a page is hidden or closed —
+   * each platform calls it from its own lifecycle event. Does nothing when no
+   * save is waiting. Stable across renders.
+   */
+  flush: () => void;
+}
+
 /**
  * Drives the session's save policy over the network.
  *
@@ -41,87 +51,121 @@ export interface AutosaveTimings {
  * A drag already emits exactly one action, one revision and one undo step, so
  * debouncing per settled edit is exact rather than approximate.
  *
- * ## The rule this hook exists to get right
+ * ## The rules this hook exists to get right
  *
  * **A dependency change may cancel a pending debounce. It may never cancel an
  * in-flight request.** `saveStarted` is cleared only by `saveSucceeded` or
  * `saveFailed`, so a request whose outcome is dropped leaves the session
- * `saving` forever and `pendingWrite` null forever — autosave dies silently on
- * the first write and never recovers.
+ * `saving` forever and `pendingWrite` null forever — autosave dies silently.
+ * The first thing a started save does is change the deps (`onSaveStarted()`
+ * makes `pendingWrite` return null), so a per-run "cancelled" flag would
+ * silence exactly the request it just issued. The request's handlers are
+ * guarded instead by a **mount** flag owned by a separate empty-dependency
+ * effect, whose cleanup runs once, at unmount.
  *
- * That is not hypothetical. The obvious shape — a per-run `let cancelled` set
- * by the effect's cleanup — does exactly this, because the *first* thing a
- * started save does is change the deps: `onSaveStarted()` makes `pendingWrite`
- * return null, React tears down the run that issued the request, and the
- * request's own handlers are the thing it silences.
- *
- * So the request's handlers are guarded by a **mount** flag owned by a separate
- * empty-dependency effect, whose cleanup runs once, at unmount. A dep change
- * then cancels only a timer that has not fired; a request that has been issued
- * always reports.
+ * **Leaving never drops a waiting save.** Unmounting — navigating elsewhere in
+ * the app — sends a save still waiting on its timer instead of cancelling it
+ * with the timer, and `flush` does the same for a page being hidden or closed.
+ * Which save is waiting is tracked apart from the timer's own effect, so it
+ * does not matter in which order React runs the cleanups at unmount.
  */
 export function useAutosave(
   session: EditorSession,
   client: Client | null,
   handlers: AutosaveHandlers,
   timings: AutosaveTimings = {},
-): void {
+): Autosave {
   // Read through a ref so a change of handler identity cannot restart the
   // debounce; only the document settling should do that. Written in an effect
   // rather than during render because a render may be discarded, and the only
-  // readers are a timer and a promise — both strictly after commit.
+  // readers are a timer, a promise and `flush` — all strictly after commit.
   const handlersRef = useRef(handlers);
   useEffect(() => {
     handlersRef.current = handlers;
   });
 
-  // Owned by an empty-dependency effect, so its cleanup runs once — at unmount
-  // — and nothing else can silence a request that has already been sent.
+  const write = pendingWrite(session);
+  const retrying = session.status === "error";
+
+  // The newest committed write and client, for `flush`, which runs from a
+  // lifecycle event or an unmount rather than from a render.
+  const latest = useRef<{ write: PendingWrite | null; client: Client | null }>({
+    write: null,
+    client: null,
+  });
+  useEffect(() => {
+    latest.current = { write, client };
+  });
+
+  // The timer of the save that is waiting, or null when none is. Cleared by
+  // the timer itself and by `flush`, never by an effect cleanup — see above.
+  const waiting = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const mounted = useRef(true);
+
+  const send = useCallback((pending: PendingWrite, to: Client, keepalive: boolean) => {
+    if (mounted.current) handlersRef.current.onSaveStarted();
+
+    // The revision being sent, captured before anything can move on. The
+    // server acknowledges *this* number, not whatever the document holds when
+    // the response lands.
+    const sent = pending.doc.revision;
+    const options = keepalive ? { keepalive: true } : undefined;
+    const request =
+      pending.kind === "create"
+        ? to.createList(pending.doc, options)
+        : to.updateList(pending.doc, pending.expectedRevision, options);
+
+    request.then(
+      () => {
+        if (mounted.current) handlersRef.current.onSaveSucceeded(sent);
+      },
+      (error: unknown) => {
+        if (!mounted.current) return;
+        // 409 is the API's "someone else wrote first". Everything else — a
+        // dead network, a 500 — is transient and worth retrying.
+        const conflict = error instanceof ApiError && error.status === 409;
+        handlersRef.current.onSaveFailed(conflict ? "conflict" : "offline");
+      },
+    );
+  }, []);
+
+  const flush = useCallback(() => {
+    const timer = waiting.current;
+    const { write: pending, client: to } = latest.current;
+    if (timer === null || !pending || !to) return;
+    // Cancelled here, not left to the re-render `onSaveStarted` causes: that
+    // render is scheduled, and the timer can fire before it runs.
+    clearTimeout(timer);
+    waiting.current = null;
+    send(pending, to, true);
+  }, [send]);
+
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      flush();
     };
-  }, []);
-
-  const write = pendingWrite(session);
-  const retrying = session.status === "error";
+  }, [flush]);
 
   const debounceMs = timings.debounceMs ?? AUTOSAVE_DEBOUNCE_MS;
   const retryMs = timings.retryMs ?? AUTOSAVE_RETRY_MS;
 
   useEffect(() => {
-    if (!client || !write) return;
+    if (!client || !write) {
+      waiting.current = null;
+      return;
+    }
 
     const timer = setTimeout(
       () => {
-        handlersRef.current.onSaveStarted();
-
-        // The revision being sent, captured before anything can move on. The
-        // server acknowledges *this* number, not whatever the document holds
-        // when the response lands.
-        const sent = write.doc.revision;
-        const request =
-          write.kind === "create"
-            ? client.createList(write.doc)
-            : client.updateList(write.doc, write.expectedRevision);
-
-        request.then(
-          () => {
-            if (mounted.current) handlersRef.current.onSaveSucceeded(sent);
-          },
-          (error: unknown) => {
-            if (!mounted.current) return;
-            // 409 is the API's "someone else wrote first". Everything else —
-            // a dead network, a 500 — is transient and worth retrying.
-            const conflict = error instanceof ApiError && error.status === 409;
-            handlersRef.current.onSaveFailed(conflict ? "conflict" : "offline");
-          },
-        );
+        waiting.current = null;
+        send(write, client, false);
       },
       retrying ? retryMs : debounceMs,
     );
+    waiting.current = timer;
 
     // Only the timer. Cancelling the request here is the failure described
     // above; see also `saveStarted` in @tl/editor-core/src/session.ts.
@@ -147,4 +191,6 @@ export function useAutosave(
     debounceMs,
     retryMs,
   ]);
+
+  return { flush };
 }

@@ -1,8 +1,11 @@
 import {
   newId,
   newListId,
+  readDraft,
+  removeDraft,
   useApiClient,
   useAutosave,
+  useDraft,
   type AutosaveHandlers,
 } from "@tl/app-core";
 import { createTierList, TIER_PALETTE, type TierList, type TierListAction } from "@tl/core";
@@ -10,6 +13,7 @@ import {
   applyAction,
   createSession,
   redoSession,
+  resumeSession,
   saveFailed,
   saveStarted,
   saveSucceeded,
@@ -18,6 +22,7 @@ import {
 import { InteractiveBoard } from "@tl/editor";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  AppState,
   ScrollView,
   Text,
   useWindowDimensions,
@@ -27,8 +32,11 @@ import {
   type NativeSyntheticEvent,
 } from "react-native";
 import { EditSheet } from "./EditSheet";
-import { lastListId, rememberListId, tokenStore } from "./storage";
+import { draftStore, lastListId, rememberListId, tokenStore } from "./storage";
 import { Toolbar } from "./Toolbar";
+
+/** How long to wait before asking the server for the list again after a failed load. */
+const LOAD_RETRY_MS = 3000;
 
 /** The clock lives at the boundary, exactly as it does on the web. */
 function now(): string {
@@ -80,30 +88,67 @@ export default function Editor() {
   // over a document the server already holds.
   const [loaded, setLoaded] = useState(false);
 
+  // The same load policy as the web editor, and for the same reasons: wait
+  // while the connection is still being established, retry a load that could
+  // not be asked rather than treat it as "no such list", and resume whatever
+  // this device kept through `resumeSession`.
   useEffect(() => {
-    if (!listId) return;
-    if (!client) {
-      // No API configured is a legitimate state — the board still works, and
-      // the toolbar says plainly that nothing is being saved.
-      setSession(createSession(emptyDoc(listId), null));
-      setLoaded(true);
-      return;
-    }
+    if (!listId || connection.state === "connecting") return;
+
     let alive = true;
-    void (async () => {
-      const existing = await client.getList(listId).catch(() => null);
+    let retry: ReturnType<typeof setTimeout> | undefined;
+
+    if (!client) {
+      void (async () => {
+        const draft = await readDraft(draftStore, listId);
+        if (!alive) return;
+        setSession(
+          draft
+            ? createSession(draft.doc, draft.baseRevision)
+            : createSession(emptyDoc(listId), null),
+        );
+        setLoaded(true);
+      })();
+      return () => {
+        alive = false;
+      };
+    }
+
+    const load = async () => {
+      let stored: TierList | null;
+      try {
+        stored = await client.getList(listId);
+      } catch {
+        if (alive) retry = setTimeout(() => void load(), LOAD_RETRY_MS);
+        return;
+      }
       if (!alive) return;
-      setSession(
-        existing
-          ? createSession(existing, existing.revision)
-          : createSession(emptyDoc(listId), null),
-      );
+
+      const draft = await readDraft(draftStore, listId);
+      const resumed = resumeSession(stored, draft, emptyDoc(listId), {
+        id: newListId(),
+        now: now(),
+      });
+      if (resumed.recovered) {
+        try {
+          await client.createList(resumed.recovered);
+        } catch {
+          if (alive) retry = setTimeout(() => void load(), LOAD_RETRY_MS);
+          return;
+        }
+        await removeDraft(draftStore, listId);
+      }
+      if (!alive) return;
+      setSession(resumed.session);
       setLoaded(true);
-    })();
+    };
+    void load();
+
     return () => {
       alive = false;
+      clearTimeout(retry);
     };
-  }, [listId, client]);
+  }, [listId, client, connection.state]);
 
   const dispatch = useCallback((action: TierListAction) => {
     setSession((current) => applyAction(current, action, now()));
@@ -120,7 +165,17 @@ export default function Editor() {
     }),
     [],
   );
-  useAutosave(session, loaded ? client : null, handlers);
+  const { flush } = useAutosave(session, loaded ? client : null, handlers);
+  useDraft(listId ?? "", session, loaded && listId !== null, draftStore);
+
+  // Leaving the foreground is the last moment a phone reliably lets the app
+  // run; a save still waiting on its debounce goes now.
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") flush();
+    });
+    return () => subscription.remove();
+  }, [flush]);
 
   // Which tile the edit sheet is open on. Cleared when that item goes away —
   // removed, or undone back past when it was added.

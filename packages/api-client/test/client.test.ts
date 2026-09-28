@@ -1,6 +1,6 @@
 import { createTierList } from "@tl/core";
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, createClient } from "../src/client";
+import { ApiError, createClient, KEEPALIVE_BODY_LIMIT } from "../src/client";
 
 const NOW = "2026-08-01T12:00:00.000Z";
 const BASE = "https://api.example.test";
@@ -60,6 +60,69 @@ describe("createClient", () => {
     expect(url).toBe(`${BASE}/lists/list-1`);
     expect(init.method).toBe("PUT");
     expect(JSON.parse(init.body)).toEqual({ document: doc });
+  });
+
+  /**
+   * A save issued as the page closes must be allowed to outlive it — but a
+   * browser rejects a keepalive body past its budget outright, which would lose
+   * the very save it was asked to protect. So the flag rides along only while
+   * the body fits, and one byte past the limit is sent as an ordinary request.
+   */
+  describe("keepalive writes", () => {
+    function clientWith(fetchFn: ReturnType<typeof vi.fn>) {
+      return createClient({ baseUrl: BASE, token: "secret", fetch: fetchFn });
+    }
+    /** A document whose request body is exactly `bytes` long. */
+    function sizedDoc(bytes: number, expectedRevision?: number) {
+      const doc = createTierList({ id: "list-1", now: NOW });
+      const envelope = (title: string) =>
+        JSON.stringify(
+          expectedRevision === undefined
+            ? { document: { ...doc, title } }
+            : { document: { ...doc, title }, expectedRevision },
+        );
+      const overhead = new TextEncoder().encode(envelope("")).byteLength;
+      return { ...doc, title: "x".repeat(bytes - overhead) };
+    }
+
+    it("sends keepalive for a create whose body is at the limit", async () => {
+      const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ id: "list-1", revision: 0 }, 201));
+      const doc = sizedDoc(KEEPALIVE_BODY_LIMIT);
+      await clientWith(fetchFn).createList(doc, { keepalive: true });
+
+      const [, init] = fetchFn.mock.calls[0]!;
+      expect(new TextEncoder().encode(init.body).byteLength).toBe(KEEPALIVE_BODY_LIMIT);
+      expect(init.keepalive).toBe(true);
+    });
+
+    it("drops keepalive for an update one byte past the limit", async () => {
+      const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ id: "list-1", revision: 1 }));
+      const doc = sizedDoc(KEEPALIVE_BODY_LIMIT + 1, 0);
+      await clientWith(fetchFn).updateList(doc, 0, { keepalive: true });
+
+      const [, init] = fetchFn.mock.calls[0]!;
+      expect(new TextEncoder().encode(init.body).byteLength).toBe(KEEPALIVE_BODY_LIMIT + 1);
+      expect(init.keepalive).toBeUndefined();
+    });
+
+    it("counts bytes, not characters", async () => {
+      const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ id: "list-1", revision: 0 }, 201));
+      // Each "é" is one character and two bytes, so this body is under the
+      // limit in characters and over it in bytes.
+      const doc = { ...createTierList({ id: "list-1", now: NOW }), title: "é".repeat(KEEPALIVE_BODY_LIMIT / 2 + 1) };
+      await clientWith(fetchFn).createList(doc, { keepalive: true });
+
+      const [, init] = fetchFn.mock.calls[0]!;
+      expect(init.body.length).toBeLessThanOrEqual(KEEPALIVE_BODY_LIMIT);
+      expect(new TextEncoder().encode(init.body).byteLength).toBeGreaterThan(KEEPALIVE_BODY_LIMIT);
+      expect(init.keepalive).toBeUndefined();
+    });
+
+    it("sends no keepalive unless asked", async () => {
+      const fetchFn = vi.fn().mockResolvedValue(jsonResponse({ id: "list-1", revision: 0 }, 201));
+      await clientWith(fetchFn).createList(createTierList({ id: "list-1", now: NOW }));
+      expect(fetchFn.mock.calls[0]![1].keepalive).toBeUndefined();
+    });
   });
 
   it("returns null rather than throwing when a list is missing", async () => {

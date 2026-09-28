@@ -47,6 +47,7 @@ interface Pending {
   kind: "create" | "update";
   doc: TierList;
   expectedRevision?: number;
+  keepalive: boolean;
   resolve: (revision: number) => void;
   reject: (error: unknown) => void;
 }
@@ -56,13 +57,15 @@ function fakeClient(): { client: Client; calls: Pending[] } {
   const hold = (
     kind: Pending["kind"],
     doc: TierList,
-    expectedRevision?: number,
+    expectedRevision: number | undefined,
+    keepalive: boolean | undefined,
   ) =>
     new Promise<{ id: string; revision: number }>((resolve, reject) => {
       calls.push({
         kind,
         doc,
         expectedRevision,
+        keepalive: keepalive === true,
         resolve: (revision) => resolve({ id: doc.id, revision }),
         reject,
       });
@@ -72,8 +75,9 @@ function fakeClient(): { client: Client; calls: Pending[] } {
     mintToken: () => Promise.reject(new Error("not used here")),
     getList: () => Promise.resolve(null),
     listMine: () => Promise.resolve([]),
-    createList: (doc) => hold("create", doc),
-    updateList: (doc, expectedRevision) => hold("update", doc, expectedRevision),
+    createList: (doc, options) => hold("create", doc, undefined, options?.keepalive),
+    updateList: (doc, expectedRevision, options) =>
+      hold("update", doc, expectedRevision, options?.keepalive),
     uploadAsset: () => Promise.reject(new Error("not used here")),
     shareList: () => Promise.reject(new Error("not used here")),
     browse: () => Promise.resolve([]),
@@ -93,6 +97,7 @@ interface Probe {
   failures: string[];
   edit: (action: TierListAction) => void;
   bump: () => void;
+  flushSave: () => void;
 }
 
 interface HarnessProps {
@@ -122,12 +127,13 @@ function Harness({ probe, client, initial }: HarnessProps) {
     [probe],
   );
 
-  useAutosave(session, client, handlers, TIMINGS);
+  const { flush: flushSave } = useAutosave(session, client, handlers, TIMINGS);
 
   probe.session = session;
   probe.renders += 1;
   probe.edit = (action) => setSession((s) => applyAction(s, action, clock()));
   probe.bump = () => setNoise((n) => n + 1);
+  probe.flushSave = flushSave;
   return null;
 }
 
@@ -142,6 +148,7 @@ async function mount(options: {
     failures: [],
     edit: () => {},
     bump: () => {},
+    flushSave: () => {},
   };
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -376,6 +383,82 @@ describe("useAutosave", () => {
 
     await wait(DEBOUNCE * 0.6);
     expect(calls).toHaveLength(1);
+  });
+
+  /**
+   * Leaving the editor inside the app unmounts it. An edit made inside the
+   * debounce window is then waiting on a timer the unmount clears, and without
+   * this it would simply never be sent.
+   */
+  it("sends a waiting save on unmount instead of dropping it", async () => {
+    const { client, calls } = fakeClient();
+    const { probe, unmount } = await mount({ client });
+
+    await act(async () => probe.edit(RENAME));
+    const edited = probe.session.doc;
+    expect(calls).toHaveLength(0);
+
+    await unmount();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ kind: "update", doc: edited, keepalive: true });
+    expect(calls[0]!.expectedRevision).toBe(baseDoc().revision);
+    // Nothing is left to hear the answer.
+    await act(async () => calls[0]!.resolve(edited.revision));
+    await flush();
+    expect(probe.acknowledged).toEqual([]);
+  });
+
+  it("sends nothing more on unmount when no save is waiting", async () => {
+    const { client, calls } = fakeClient();
+    const { probe, unmount } = await mount({ client });
+
+    await act(async () => probe.edit(RENAME));
+    await wait(DEBOUNCE * 2);
+    expect(calls).toHaveLength(1);
+
+    await unmount();
+    expect(calls).toHaveLength(1);
+  });
+
+  /**
+   * `flush` is what a page calls as it is hidden or closed: the waiting save
+   * goes at once, marked to outlive the page, and the timer it replaced must
+   * not send it a second time.
+   */
+  it("flush sends the waiting save at once, with keepalive, and only once", async () => {
+    const { client, calls } = fakeClient();
+    const { probe } = await mount({ client });
+
+    await act(async () => probe.edit(RENAME));
+    await act(async () => probe.flushSave());
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ kind: "update", doc: probe.session.doc, keepalive: true });
+    expect(probe.session.status).toBe("saving");
+
+    await wait(DEBOUNCE * 2);
+    expect(calls).toHaveLength(1);
+
+    await act(async () => calls[0]!.resolve(calls[0]!.doc.revision));
+    await flush();
+    expect(probe.session.status).toBe("saved");
+  });
+
+  it("flush does nothing when no save is waiting", async () => {
+    const { client, calls } = fakeClient();
+    const { probe } = await mount({ client });
+
+    await act(async () => probe.flushSave());
+    expect(calls).toHaveLength(0);
+
+    // Nor while a save is already in flight: two writes would race for one
+    // expected revision.
+    await act(async () => probe.edit(RENAME));
+    await wait(DEBOUNCE * 2);
+    await act(async () => probe.flushSave());
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.keepalive).toBe(false);
   });
 
   it("creates before it updates, for a document the server has never seen", async () => {

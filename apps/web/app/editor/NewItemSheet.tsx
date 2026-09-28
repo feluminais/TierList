@@ -1,5 +1,6 @@
 "use client";
 
+import { DOCUMENT_LIMITS } from "@tl/core";
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 
 export interface NewItemSheetProps {
@@ -133,6 +134,7 @@ export function NewItemSheet({
             aria-label="Item name"
             data-testid="new-item-label"
             value={label}
+            maxLength={DOCUMENT_LIMITS.itemLabelLength}
             onChange={(event) => setLabel(event.target.value)}
             placeholder="Add it by name instead…"
             style={{ ...field, flex: 1 }}

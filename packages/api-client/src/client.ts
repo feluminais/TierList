@@ -28,13 +28,38 @@ export interface ClientOptions {
   fetch: typeof globalThis.fetch;
 }
 
+/**
+ * The largest request body sent with `keepalive`.
+ *
+ * Browsers refuse a keepalive request outright once the bodies of all such
+ * requests in flight exceed 64 KiB, which would lose the save it was meant to
+ * protect. Below this, a save survives the page closing; above it, the save
+ * goes as an ordinary request and the device's local draft is the safety net.
+ */
+export const KEEPALIVE_BODY_LIMIT = 60_000;
+
+export interface WriteOptions {
+  /**
+   * Let the request outlive the page that sent it — for a save issued while
+   * the page is being hidden or closed. Honoured only up to
+   * `KEEPALIVE_BODY_LIMIT` bytes; a larger body is sent without it.
+   */
+  keepalive?: boolean;
+}
+
 export interface Client {
   mintToken: () => Promise<TokenResponse>;
+  /**
+   * The stored list, or null when there is none. A failure to find out — the
+   * network, a server error — throws rather than returning null, because
+   * "not there" and "could not ask" call for opposite responses.
+   */
   getList: (id: string) => Promise<TierList | null>;
-  createList: (doc: TierList) => Promise<WriteResponse>;
+  createList: (doc: TierList, options?: WriteOptions) => Promise<WriteResponse>;
   updateList: (
     doc: TierList,
     expectedRevision: number,
+    options?: WriteOptions,
   ) => Promise<WriteResponse>;
   listMine: () => Promise<ListSummary[]>;
   /**
@@ -77,7 +102,7 @@ export function createClient(options: ClientOptions): Client {
 
   async function call(
     path: string,
-    init: { method: string; body?: unknown; auth: boolean },
+    init: { method: string; body?: unknown; auth: boolean; keepalive?: boolean },
   ): Promise<Response> {
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -86,10 +111,17 @@ export function createClient(options: ClientOptions): Client {
       headers.authorization = `Bearer ${options.token}`;
     }
 
+    const body = init.body === undefined ? undefined : JSON.stringify(init.body);
+    const keepalive =
+      init.keepalive === true &&
+      body !== undefined &&
+      new TextEncoder().encode(body).byteLength <= KEEPALIVE_BODY_LIMIT;
+
     return options.fetch(`${base}${path}`, {
       method: init.method,
       headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      body,
+      ...(keepalive ? { keepalive: true } : {}),
     });
   }
 
@@ -113,20 +145,22 @@ export function createClient(options: ClientOptions): Client {
       return migrate(body.document);
     },
 
-    async createList(doc) {
+    async createList(doc, writeOptions) {
       const res = await call(`/lists/${segment(doc.id)}`, {
         method: "PUT",
         body: { document: doc },
         auth: true,
+        keepalive: writeOptions?.keepalive,
       });
       return (await expectOk(res)) as WriteResponse;
     },
 
-    async updateList(doc, expectedRevision) {
+    async updateList(doc, expectedRevision, writeOptions) {
       const res = await call(`/lists/${segment(doc.id)}`, {
         method: "PATCH",
         body: { document: doc, expectedRevision },
         auth: true,
+        keepalive: writeOptions?.keepalive,
       });
       return (await expectOk(res)) as WriteResponse;
     },

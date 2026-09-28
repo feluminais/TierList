@@ -19,6 +19,7 @@ import {
   layoutBoard,
   type BoardLayout,
   redoSession,
+  resumeSession,
   saveFailed,
   saveStarted,
   saveSucceeded,
@@ -34,7 +35,6 @@ import {
 } from "react";
 import { AnnotateLayer } from "./AnnotateLayer";
 import { downloadBytes, filenameFor } from "./download";
-import { newId } from "@tl/app-core";
 import { EditSheet, type EditCanvasComponent } from "./EditSheet";
 import { NewItemSheet } from "./NewItemSheet";
 import { ShareDialog } from "./ShareDialog";
@@ -42,12 +42,30 @@ import { TierOverlay } from "./TierOverlay";
 import { TileEditOverlay } from "./TileEditButton";
 import { Toolbar } from "./Toolbar";
 import {
+  newId,
+  newListId,
+  readDraft,
+  removeDraft,
   useApiClient,
   useAssetUpload,
   useAutosave,
+  useDraft,
   useShare,
   type AutosaveHandlers,
+  type DraftStore,
 } from "@tl/app-core";
+
+/** How long to wait before asking the server for the list again after a failed load. */
+const LOAD_RETRY_MS = 3000;
+
+/** `localStorage` when this browser allows it; drafts are skipped when it does not. */
+function browserDraftStore(): DraftStore | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * `@tl/editor`'s `BoardExporter`, restated rather than imported — the same
@@ -199,46 +217,87 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
   // which is long enough for autosave to `createList` an empty document over
   // the top of one the server already holds.
   const [loaded, setLoaded] = useState(false);
-  // Reset when the route changes to another list, so the previous document is
-  // never shown as though it were this one — and, more importantly, never
-  // saved under this id.
-  useEffect(() => {
-    setSession(createSession(emptyDoc(listId), null));
-    setLoaded(false);
-  }, [listId]);
+  // No reset when `listId` changes: `EditorClient` keys this component on it,
+  // so another list is always a fresh mount — the previous list's document can
+  // never be shown, or saved, under this id.
 
   // `process.env.NEXT_PUBLIC_API_URL` is written out in full so the bundler can
   // inline it; a destructured or computed read is not substituted.
   const connection = useApiClient(process.env.NEXT_PUBLIC_API_URL);
   const client = connection.state === "connected" ? connection.client : null;
 
+  // This browser's copy of edits the server has not acknowledged. Stable: the
+  // hooks below key on it.
+  const [draftStore] = useState(browserDraftStore);
+
   useEffect(() => {
-    if (!client) {
-      // No API configured is the normal state of this route. Start a local
-      // document under the real id so nothing downstream has to special-case it.
-      setSession(createSession(emptyDoc(listId), null));
-      setLoaded(true);
-      return;
-    }
+    // Still finding out whether there is a server. Opening a document now would
+    // mean opening the wrong one the moment the answer arrives.
+    if (connection.state === "connecting") return;
+
     let alive = true;
-    (async () => {
-      const existing = await client.getList(listId).catch(() => null);
+    let retry: ReturnType<typeof setTimeout> | undefined;
+
+    if (!client) {
+      // No API — none configured, or none reachable — so the list is edited
+      // locally. A draft this browser kept is still the latest content it has,
+      // so it opens as it was left; it resumes saving once a server is back.
+      void (async () => {
+        const draft = await readDraft(draftStore, listId);
+        if (!alive) return;
+        setSession(
+          draft
+            ? createSession(draft.doc, draft.baseRevision)
+            : createSession(emptyDoc(listId), null),
+        );
+        setLoaded(true);
+      })();
+      return () => {
+        alive = false;
+      };
+    }
+
+    const load = async () => {
+      let stored: TierList | null;
+      try {
+        stored = await client.getList(listId);
+      } catch {
+        // Could not ask, which is not the same as "no such list". Treating it
+        // as one opens a new document under this id, whose first save then
+        // collides with the list the server does hold. Ask again instead.
+        if (alive) retry = setTimeout(() => void load(), LOAD_RETRY_MS);
+        return;
+      }
       if (!alive) return;
-      // A document the server already holds starts *synced* at its own
-      // revision. Starting at null would make the first write a create, which
-      // the create-only PUT rejects with a 409 — landing a returning visitor
-      // straight in conflict. That is exactly the open item this fixes.
-      setSession(
-        existing
-          ? createSession(existing, existing.revision)
-          : createSession(emptyDoc(listId), null),
-      );
+
+      const draft = await readDraft(draftStore, listId);
+      const resumed = resumeSession(stored, draft, emptyDoc(listId), {
+        id: newListId(),
+        now: now(),
+      });
+      if (resumed.recovered) {
+        // Created before the stored version replaces the draft, so the edits
+        // exist somewhere at every moment; the draft goes as soon as they do,
+        // so a second load cannot recover them twice.
+        try {
+          await client.createList(resumed.recovered);
+        } catch {
+          if (alive) retry = setTimeout(() => void load(), LOAD_RETRY_MS);
+          return;
+        }
+        await removeDraft(draftStore, listId);
+      }
+      if (!alive) return;
+      setSession(resumed.session);
       setLoaded(true);
-    })();
+    };
+    void load();
+
     return () => {
       alive = false;
+      clearTimeout(retry);
     };
-  }, [listId, client]);
+  }, [listId, client, connection.state, draftStore]);
 
   // The clock lives here, at the boundary, exactly as it does in the gesture
   // hook. A drag emits at most one action, so this runs once per completed
@@ -435,7 +494,23 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
     [],
   );
 
-  useAutosave(session, loaded ? client : null, handlers);
+  const { flush } = useAutosave(session, loaded ? client : null, handlers);
+  useDraft(listId, session, loaded, draftStore);
+
+  // A page being hidden may be a page about to be closed, and on a phone it is
+  // often the last event the page gets. A save waiting on its debounce goes now,
+  // sent so that it can outlive the page.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [flush]);
 
   // Measured rather than read from a media query: `layoutBoard` takes a number,
   // and the canvas, the hit-testing and the hover overlay must all be handed
@@ -486,6 +561,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
         onAnnotate={() => setAnnotating(true)}
         onCategory={onCategory}
         onTags={onTags}
+        loading={!loaded}
       />
 
       {filling ? <FillBanner placed={progress.placed} total={progress.total} /> : null}

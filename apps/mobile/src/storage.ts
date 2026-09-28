@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import type { TokenStore } from "@tl/app-core";
+import type { DraftStore, TokenStore } from "@tl/app-core";
 
 /**
  * Where this device's anonymous token and its current list id live.
@@ -12,6 +12,13 @@ import type { TokenStore } from "@tl/app-core";
 export const tokenStore: TokenStore = {
   getItem: (key) => AsyncStorage.getItem(key),
   setItem: (key, value) => AsyncStorage.setItem(key, value),
+};
+
+/** Where this device keeps edits the server has not acknowledged yet. */
+export const draftStore: DraftStore = {
+  getItem: (key) => AsyncStorage.getItem(key),
+  setItem: (key, value) => AsyncStorage.setItem(key, value),
+  removeItem: (key) => AsyncStorage.removeItem(key),
 };
 
 /**

@@ -1,6 +1,6 @@
 "use client";
 
-import type { Row } from "@tl/core";
+import { DOCUMENT_LIMITS, type Row } from "@tl/core";
 import type { Rect } from "@tl/editor-core";
 import {
   useEffect,
@@ -116,6 +116,7 @@ export function TierPanel({
           aria-label="Tier name"
           data-testid="tier-panel-name"
           value={row.label}
+          maxLength={DOCUMENT_LIMITS.rowLabelLength}
           placeholder="Tier name"
           onChange={(event) => onRename(event.target.value)}
           style={{ ...field, flex: 1 }}

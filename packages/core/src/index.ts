@@ -3,6 +3,7 @@ export * from "./factory";
 export * from "./actions";
 export * from "./reduce";
 export * from "./migrate";
+export * from "./limits";
 export * from "./validate";
 export * from "./template";
 export * from "./compare";

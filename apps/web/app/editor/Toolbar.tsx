@@ -1,6 +1,6 @@
 "use client";
 
-import { CATEGORIES } from "@tl/core";
+import { CATEGORIES, DOCUMENT_LIMITS } from "@tl/core";
 import type { EditorSession } from "@tl/editor-core";
 import Link from "next/link";
 import type { CSSProperties } from "react";
@@ -35,6 +35,11 @@ export interface ToolbarProps {
    * stored form and the searched form drift apart.
    */
   onTags: (text: string) => void;
+  /**
+   * True until the list has been read from the server. The session meanwhile
+   * holds a placeholder, whose save state describes nothing real.
+   */
+  loading?: boolean;
 }
 
 /**
@@ -57,8 +62,9 @@ export function Toolbar({
   onAnnotate,
   onCategory,
   onTags,
+  loading = false,
 }: ToolbarProps) {
-  const save = saveReadout(session, connection);
+  const save = saveReadout(session, connection, loading);
 
   return (
     <div style={bar}>
@@ -75,6 +81,7 @@ export function Toolbar({
         aria-label="List title"
         data-testid="title-input"
         value={session.doc.title}
+        maxLength={DOCUMENT_LIMITS.titleLength}
         onChange={(event) => onTitleChange(event.target.value)}
         placeholder="Untitled tier list"
         style={{ ...field, flex: "1 1 220px", fontSize: 16 }}
@@ -213,7 +220,7 @@ interface Readout {
  * saying out loud, and it is the normal state of this route when no API is
  * configured.
  */
-function saveReadout(session: EditorSession, connection: Connection): Readout {
+function saveReadout(session: EditorSession, connection: Connection, loading: boolean): Readout {
   if (connection.state === "disconnected") {
     return { key: "disconnected", text: "Not connected — nothing is saved", style: muted };
   }
@@ -226,6 +233,9 @@ function saveReadout(session: EditorSession, connection: Connection): Readout {
       text: "Not connected — server unreachable",
       style: warned,
     };
+  }
+  if (loading) {
+    return { key: "loading", text: "Loading…", style: muted };
   }
 
   switch (session.status) {

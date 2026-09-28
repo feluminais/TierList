@@ -1,4 +1,11 @@
-import { createTierList, type TierList, type TierListAction } from "@tl/core";
+import {
+  createTierList,
+  DOCUMENT_LIMITS,
+  reduce,
+  validateDocument,
+  type TierList,
+  type TierListAction,
+} from "@tl/core";
 import { describe, expect, it } from "vitest";
 import { canRedo, canUndo } from "../src/history";
 import {
@@ -7,10 +14,12 @@ import {
   createSession,
   pendingWrite,
   redoSession,
+  resumeSession,
   saveFailed,
   saveStarted,
   saveSucceeded,
   undoSession,
+  unsyncedDraft,
   type EditorSession,
 } from "../src/session";
 
@@ -501,5 +510,119 @@ describe("canUndo and canRedo cannot drift from the history", () => {
 
     // The walk must actually have exercised both stacks, or it proves nothing.
     expect(session.history.past.length + session.history.future.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Revisions here are deliberately unequal — a stored list at 9, a draft made on
+ * top of 5 and carrying 7 — so a resolver that compared the wrong pair of
+ * numbers cannot land on the right answer by coincidence.
+ */
+describe("drafts", () => {
+  const FORK = { id: "fork-1", now: "2026-09-28T09:00:00.000Z" };
+
+  /** A list at `revision`, whose content differs for every revision. */
+  function at(revision: number, title = `rev ${revision}`): TierList {
+    let doc = base();
+    doc = reduce(doc, { type: "meta/set", patch: { title } }, T1);
+    for (let r = doc.revision; r < revision; r += 1) {
+      doc = reduce(doc, { type: "item/addText", id: `i${r}`, label: `item ${r}` }, T1);
+    }
+    return doc;
+  }
+
+  describe("unsyncedDraft", () => {
+    it("keeps nothing while the server holds the document", () => {
+      expect(unsyncedDraft(createSession(at(5), 5))).toBeNull();
+    });
+
+    it("keeps nothing for a new list nobody has edited", () => {
+      expect(unsyncedDraft(createSession(base(), null))).toBeNull();
+    });
+
+    it("keeps a new list once it has been edited", () => {
+      const session = applyAction(createSession(base(), null), RENAME, T1);
+      expect(unsyncedDraft(session)).toEqual({ doc: session.doc, baseRevision: null });
+    });
+
+    it("keeps edits made on top of what the server holds, naming that revision", () => {
+      const session = createSession(at(7), 5);
+      expect(unsyncedDraft(session)).toEqual({ doc: session.doc, baseRevision: 5 });
+    });
+  });
+
+  describe("resumeSession", () => {
+    it("opens the stored list when there is no draft", () => {
+      const { session, recovered } = resumeSession(at(9), null, base(), FORK);
+      expect(session.doc).toEqual(at(9));
+      expect(session.status).toBe("saved");
+      expect(recovered).toBeNull();
+    });
+
+    it("starts a new list when there is neither", () => {
+      const { session } = resumeSession(null, null, base(), FORK);
+      expect(pendingWrite(session)).toEqual({ kind: "create", doc: base() });
+    });
+
+    it("picks up edits made on top of exactly what the server holds", () => {
+      const draft = { doc: at(7, "mine"), baseRevision: 5 };
+      const { session, recovered } = resumeSession(at(5), draft, base(), FORK);
+
+      expect(session.doc).toEqual(draft.doc);
+      expect(pendingWrite(session)).toEqual({ kind: "update", doc: draft.doc, expectedRevision: 5 });
+      expect(recovered).toBeNull();
+    });
+
+    it("recreates a list the server no longer has", () => {
+      const draft = { doc: at(7, "mine"), baseRevision: 5 };
+      const { session, recovered } = resumeSession(null, draft, base(), FORK);
+      expect(pendingWrite(session)).toEqual({ kind: "create", doc: draft.doc });
+      expect(recovered).toBeNull();
+    });
+
+    it("drops a draft that already reached the server, whatever order its keys are in", () => {
+      const landed = at(7, "mine");
+      const reordered = Object.fromEntries(Object.entries(landed).reverse()) as TierList;
+      const { session, recovered } = resumeSession(reordered, { doc: landed, baseRevision: 5 }, base(), FORK);
+
+      expect(session.status).toBe("saved");
+      expect(pendingWrite(session)).toBeNull();
+      expect(recovered).toBeNull();
+    });
+
+    it("keeps both versions when the list moved on without the draft", () => {
+      const theirs = at(9, "theirs");
+      const mine = at(7, "mine");
+      const { session, recovered } = resumeSession(theirs, { doc: mine, baseRevision: 5 }, base(), FORK);
+
+      expect(session.doc).toEqual(theirs);
+      expect(session.status).toBe("saved");
+      expect(recovered).toMatchObject({
+        id: FORK.id,
+        title: "mine (recovered)",
+        revision: 0,
+        createdAt: FORK.now,
+        updatedAt: FORK.now,
+        items: mine.items,
+        placements: mine.placements,
+      });
+      expect(validateDocument(recovered)).toEqual([]);
+    });
+
+    it("keeps a recovered title within the document's limit", () => {
+      const long = "x".repeat(DOCUMENT_LIMITS.titleLength);
+      const { recovered } = resumeSession(at(9), { doc: at(7, long), baseRevision: 5 }, base(), FORK);
+
+      expect(recovered!.title.length).toBe(DOCUMENT_LIMITS.titleLength);
+      expect(recovered!.title.endsWith(" (recovered)")).toBe(true);
+      expect(validateDocument(recovered)).toEqual([]);
+    });
+
+    it("ignores a draft for a different list", () => {
+      const other = { ...at(7, "mine"), id: "someone-else" };
+      const { session, recovered } = resumeSession(at(9), { doc: other, baseRevision: 5 }, base(), FORK);
+      expect(session.doc).toEqual(at(9));
+      expect(recovered).toBeNull();
+    });
   });
 });

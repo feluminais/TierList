@@ -4,12 +4,8 @@ import { createTierList, defaultImageEdit } from "../src/factory";
 import { reduce } from "../src/reduce";
 import { startFill, toTemplate } from "../src/template";
 import { DEFAULT_STROKE_WIDTH, type TierList } from "../src/types";
-import {
-  assertValidDocument,
-  DOCUMENT_LIMITS,
-  DocumentInvalidError,
-  validateDocument,
-} from "../src/validate";
+import { DOCUMENT_LIMITS } from "../src/limits";
+import { assertValidDocument, DocumentInvalidError, validateDocument } from "../src/validate";
 
 const NOW = "2026-07-31T12:00:00.000Z";
 

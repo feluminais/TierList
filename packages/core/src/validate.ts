@@ -1,28 +1,6 @@
 import { MAX_TAG_LENGTH, MAX_TAGS } from "./categories";
+import { DOCUMENT_LIMITS } from "./limits";
 import type { TierList } from "./types";
-
-/**
- * Upper bounds on what a stored document may hold.
- *
- * Each sits far above anything the editor produces. They exist so that one
- * hand-written document cannot make every reader of it — the share page, the
- * editor, everyone filling a template — allocate, lay out or download
- * something unbounded.
- */
-export const DOCUMENT_LIMITS = {
-  idLength: 128,
-  titleLength: 200,
-  descriptionLength: 2000,
-  rowLabelLength: 100,
-  itemLabelLength: 300,
-  rows: 64,
-  items: 2000,
-  strokesPerSurface: 1000,
-  /** Numbers, not points: a stroke is a flat `[x0, y0, x1, y1, …]` list. */
-  strokeCoordinates: 8192,
-  tileSize: 1024,
-  labelWidth: 2048,
-} as const;
 
 /**
  * A CSS hex colour: `#rgb`, `#rrggbb` or `#rrggbbaa`.

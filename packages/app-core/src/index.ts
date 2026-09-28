@@ -7,12 +7,14 @@
  * module scope, which loading `@tl/editor` would forbid, and the DOM because
  * React Native does not have one.
  */
+export { draftKey, readDraft, removeDraft, useDraft } from "./drafts";
+export type { DraftStore } from "./drafts";
 export { newId, newListId } from "./ids";
 export { useApiClient, TOKEN_STORAGE_KEY } from "./useApiClient";
 export type { ApiClientIo, Connection, TokenStore } from "./useApiClient";
 export { useAssetUpload } from "./useAssetUpload";
 export type { AssetUpload, UploadSource } from "./useAssetUpload";
 export { useAutosave } from "./useAutosave";
-export type { AutosaveHandlers, AutosaveTimings } from "./useAutosave";
+export type { Autosave, AutosaveHandlers, AutosaveTimings } from "./useAutosave";
 export { useShare } from "./useShare";
 export type { ShareState } from "./useShare";

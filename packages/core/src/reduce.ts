@@ -1,5 +1,7 @@
 import type { TierListAction } from "./actions";
+import { MAX_TAG_LENGTH, MAX_TAGS } from "./categories";
 import { defaultImageEdit } from "./factory";
+import { DOCUMENT_LIMITS as LIMITS, fitText } from "./limits";
 import type { Item, Placement, Row, TierList } from "./types";
 
 function renumber(rows: Row[]): Row[] {
@@ -26,12 +28,21 @@ function closeGap(placements: Placement[], vacated: Placement): Placement[] {
   );
 }
 
+/**
+ * Every action is applied within `DOCUMENT_LIMITS`: text is cut to its limit,
+ * and an addition past a count limit is a no-op. Those are the limits a person
+ * can reach — by typing, pasting, adding or drawing — so no edit made in any
+ * editor pushes a document past what the API accepts. Formats such as colours
+ * and sizes are not policed here: they come only from the editor's own
+ * controls, which produce nothing else.
+ */
 function apply(doc: TierList, action: TierListAction): TierList {
   switch (action.type) {
     case "row/add": {
+      if (doc.rows.length >= LIMITS.rows) return doc;
       const row: Row = {
         id: action.id,
-        label: action.label,
+        label: fitText(action.label, LIMITS.rowLabelLength),
         color: action.color,
         order: doc.rows.length,
       };
@@ -40,10 +51,11 @@ function apply(doc: TierList, action: TierListAction): TierList {
 
     case "row/rename": {
       if (!doc.rows.some((r) => r.id === action.rowId)) return doc;
+      const label = fitText(action.label, LIMITS.rowLabelLength);
       return {
         ...doc,
         rows: doc.rows.map((r) =>
-          r.id === action.rowId ? { ...r, label: action.label } : r,
+          r.id === action.rowId ? { ...r, label } : r,
         ),
       };
     }
@@ -138,10 +150,11 @@ function apply(doc: TierList, action: TierListAction): TierList {
     }
 
     case "item/addText": {
+      if (doc.items.length >= LIMITS.items) return doc;
       const item: Item = {
         id: action.id,
         kind: "text",
-        label: action.label,
+        label: fitText(action.label, LIMITS.itemLabelLength),
         edit: defaultImageEdit(),
         order: doc.items.length,
       };
@@ -158,10 +171,11 @@ function apply(doc: TierList, action: TierListAction): TierList {
     }
 
     case "item/addImage": {
+      if (doc.items.length >= LIMITS.items) return doc;
       const item: Item = {
         id: action.id,
         kind: "image",
-        label: action.label,
+        label: action.label === undefined ? undefined : fitText(action.label, LIMITS.itemLabelLength),
         assetId: action.assetId,
         edit: action.edit ?? defaultImageEdit(),
         order: doc.items.length,
@@ -195,6 +209,7 @@ function apply(doc: TierList, action: TierListAction): TierList {
 
     case "item/setEdit": {
       if (!doc.items.some((i) => i.id === action.itemId)) return doc;
+      if (action.edit.strokes.length > LIMITS.strokesPerSurface) return doc;
       return {
         ...doc,
         items: doc.items.map((i) =>
@@ -261,6 +276,7 @@ function apply(doc: TierList, action: TierListAction): TierList {
     }
 
     case "board/addStroke":
+      if (doc.boardAnnotations.length >= LIMITS.strokesPerSurface) return doc;
       return { ...doc, boardAnnotations: [...doc.boardAnnotations, action.stroke] };
 
     case "board/removeStroke": {
@@ -300,8 +316,20 @@ function apply(doc: TierList, action: TierListAction): TierList {
       };
     }
 
-    case "meta/set":
-      return { ...doc, ...action.patch };
+    case "meta/set": {
+      const { title, description, tags } = action.patch;
+      return {
+        ...doc,
+        ...action.patch,
+        ...(title === undefined ? null : { title: fitText(title, LIMITS.titleLength) }),
+        ...(description === undefined
+          ? null
+          : { description: fitText(description, LIMITS.descriptionLength) }),
+        ...(tags === undefined
+          ? null
+          : { tags: tags.slice(0, MAX_TAGS).map((tag) => fitText(tag, MAX_TAG_LENGTH)) }),
+      };
+    }
   }
 }
 

@@ -1,4 +1,5 @@
 import type { Connection } from "@tl/app-core";
+import { DOCUMENT_LIMITS } from "@tl/core";
 import type { EditorSession } from "@tl/editor-core";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
@@ -38,6 +39,7 @@ export function Toolbar({
         accessibilityLabel="List title"
         testID="title-input"
         value={session.doc.title}
+        maxLength={DOCUMENT_LIMITS.titleLength}
         onChangeText={onTitleChange}
         placeholder="Untitled tier list"
         placeholderTextColor="#5b6673"
@@ -47,8 +49,18 @@ export function Toolbar({
       <View style={styles.row}>
         <Button label="Undo" testID="undo" onPress={onUndo} disabled={!session.canUndo} />
         <Button label="Redo" testID="redo" onPress={onRedo} disabled={!session.canRedo} />
-        <Button label="+ Item" testID="add-item" onPress={onAddItem} />
-        <Button label="+ Tier" testID="add-row" onPress={onAddRow} />
+        <Button
+          label="+ Item"
+          testID="add-item"
+          onPress={onAddItem}
+          disabled={session.doc.items.length >= DOCUMENT_LIMITS.items}
+        />
+        <Button
+          label="+ Tier"
+          testID="add-row"
+          onPress={onAddRow}
+          disabled={session.doc.rows.length >= DOCUMENT_LIMITS.rows}
+        />
       </View>
 
       <Text testID="save-status" style={[styles.readout, { color: save.color }]}>

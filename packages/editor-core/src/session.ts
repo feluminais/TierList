@@ -1,4 +1,10 @@
-import { reduce, type TierList, type TierListAction } from "@tl/core";
+import {
+  DOCUMENT_LIMITS,
+  reduce,
+  sameDocument,
+  type TierList,
+  type TierListAction,
+} from "@tl/core";
 import {
   canRedo,
   canUndo,
@@ -93,6 +99,92 @@ export function pendingWrite(session: EditorSession): PendingWrite | null {
     kind: "update",
     doc: session.doc,
     expectedRevision: session.syncedRevision,
+  };
+}
+
+/**
+ * Edits the server has not acknowledged, in the form a device keeps them
+ * between visits — so closing the tab, losing the network or a crash cannot
+ * take them away.
+ */
+export interface Draft {
+  doc: TierList;
+  /**
+   * The server revision these edits were made on top of, or null when the
+   * server had never held the list. Resuming is only safe while the server is
+   * still there.
+   */
+  baseRevision: number | null;
+}
+
+/**
+ * The draft this session needs kept, or null when the server holds everything.
+ *
+ * A list the server has never held needs no draft until it has been edited: an
+ * untouched new list is recreated as it is, and keeping one would later turn
+ * into an empty "recovered" copy of a list the device merely opened offline.
+ */
+export function unsyncedDraft(session: EditorSession): Draft | null {
+  const base = session.syncedRevision;
+  if (session.doc.revision <= (base ?? 0)) return null;
+  return { doc: session.doc, baseRevision: base };
+}
+
+export interface Resumed {
+  session: EditorSession;
+  /**
+   * Unsaved edits that no longer fit the list as the server holds it, as a new
+   * list the caller should create — or null when there is nothing to recover.
+   */
+  recovered: TierList | null;
+}
+
+const RECOVERED_SUFFIX = " (recovered)";
+
+/**
+ * Open a list from what the server holds and what this device kept.
+ *
+ * - No draft: the stored list, or `fresh` when the server has none.
+ * - A draft made on top of exactly what the server holds — or a list the
+ *   server does not have — picks up where it left off, unsaved and ready for
+ *   autosave to send.
+ * - A draft whose edits already reached the server (only the response went
+ *   missing) is simply the stored list.
+ * - Otherwise the list moved on without these edits, on another device.
+ *   Neither version may silently replace the other, so the stored list opens as
+ *   it is and the draft becomes a separate list, `recovered`, under `fork.id`.
+ *
+ * `fresh` is also what identifies the list: a draft for any other id is ignored.
+ */
+export function resumeSession(
+  stored: TierList | null,
+  draft: Draft | null,
+  fresh: TierList,
+  fork: { id: string; now: string },
+): Resumed {
+  const fromServer = stored ? createSession(stored, stored.revision) : createSession(fresh, null);
+  if (!draft || draft.doc.id !== fresh.id) return { session: fromServer, recovered: null };
+
+  if (stored === null) return { session: createSession(draft.doc, null), recovered: null };
+  if (draft.baseRevision === stored.revision) {
+    return { session: createSession(draft.doc, stored.revision), recovered: null };
+  }
+  if (sameDocument(stored, draft.doc)) return { session: fromServer, recovered: null };
+
+  const title = (draft.doc.title || "Untitled tier list").slice(
+    0,
+    DOCUMENT_LIMITS.titleLength - RECOVERED_SUFFIX.length,
+  );
+  return {
+    session: fromServer,
+    recovered: {
+      ...draft.doc,
+      id: fork.id,
+      title: `${title}${RECOVERED_SUFFIX}`,
+      revision: 0,
+      createdAt: fork.now,
+      updatedAt: fork.now,
+    },
   };
 }
 

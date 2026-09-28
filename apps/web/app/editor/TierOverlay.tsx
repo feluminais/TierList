@@ -1,6 +1,6 @@
 "use client";
 
-import { TIER_PALETTE, type TierList, type TierListAction } from "@tl/core";
+import { DOCUMENT_LIMITS, TIER_PALETTE, type TierList, type TierListAction } from "@tl/core";
 import {
   DRAG_HOLD_MS,
   clampLabelWidth,
@@ -16,7 +16,6 @@ import {
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -441,9 +440,10 @@ export function TierOverlay({
           Add a tier from the bottom of the tier column, where the next one
           will appear — rather than from a bar under the board, which is
           nowhere near the thing it creates. Inside the last tier's cell so it
-          cannot overlap the tray beneath.
+          cannot overlap the tray beneath. Gone once the list holds as many
+          tiers as a document may, where `reduce` would ignore the press.
         */}
-        {lastRow && !dragging ? (
+        {lastRow && !dragging && doc.rows.length < DOCUMENT_LIMITS.rows ? (
           <button
             type="button"
             data-testid="tier-add"

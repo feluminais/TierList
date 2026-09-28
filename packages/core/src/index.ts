@@ -7,3 +7,4 @@ export * from "./validate";
 export * from "./template";
 export * from "./compare";
 export * from "./categories";
+export * from "./equality";

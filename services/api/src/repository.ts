@@ -35,12 +35,13 @@ export interface Repository {
    * a way to clobber a document without presenting a revision, which is
    * exactly what `update` exists to prevent.
    */
-  create: (doc: TierList, ownerId: string) => Promise<boolean>;
+  create: (doc: TierList, ownerId: string, now?: Date) => Promise<boolean>;
   load: (id: string) => Promise<TierList | null>;
   update: (
     doc: TierList,
     expectedRevision: number,
     ownerId: string,
+    now?: Date,
   ) => Promise<void>;
   /**
    * The owner of a stored document, or null when the id is unknown. Exists so a
@@ -104,20 +105,25 @@ export interface Repository {
   browse: (query: BrowseQuery) => Promise<BrowseRow[]>;
 }
 
-/** The single place projected columns are derived from the document. */
-function toRow(doc: TierList, ownerId: string): NewTierListRow {
+/**
+ * The single place projected columns are derived from the document.
+ *
+ * The row's timestamps are deliberately not among them. `createdAt` and
+ * `updatedAt` inside the document are the author's clock and belong to the
+ * model; the columns are the server's record of when it stored the row, and
+ * they order browse and "my lists". A client-supplied time there would let any
+ * author pin a list to the top of a public page by dating it in the future.
+ */
+function projected(doc: TierList): Omit<NewTierListRow, "ownerId" | "createdAt" | "updatedAt"> {
   return {
     id: doc.id,
     authorId: doc.authorId ?? null,
-    ownerId,
     title: doc.title,
     categoryId: doc.categoryId,
     templateId: doc.templateId ?? null,
     schemaVersion: doc.schemaVersion,
     revision: doc.revision,
     document: doc,
-    createdAt: new Date(doc.createdAt),
-    updatedAt: new Date(doc.updatedAt),
   };
 }
 
@@ -167,10 +173,10 @@ export class RevisionConflictError extends Error {
 
 export function createRepository(db: Db): Repository {
   return {
-    async create(doc, ownerId) {
+    async create(doc, ownerId, now = new Date()) {
       const inserted = await db
         .insert(tierLists)
-        .values(toRow(doc, ownerId))
+        .values({ ...projected(doc), ownerId, createdAt: now, updatedAt: now })
         .onConflictDoNothing({ target: tierLists.id })
         .returning({ id: tierLists.id });
 
@@ -200,11 +206,10 @@ export function createRepository(db: Db): Repository {
      * establish ownership with `findOwner` before calling this, so a conflict
      * reaching them can only mean a stale revision.
      */
-    async update(doc, expectedRevision, ownerId) {
-      const row = toRow(doc, ownerId);
+    async update(doc, expectedRevision, ownerId, now = new Date()) {
       const updated = await db
         .update(tierLists)
-        .set(row)
+        .set({ ...projected(doc), updatedAt: now })
         .where(
           and(
             eq(tierLists.id, doc.id),

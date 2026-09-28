@@ -1,5 +1,6 @@
-import { migrate, validateDocument, type TierList } from "@tl/core";
+import { migrate, sameDocument, validateDocument, type TierList } from "@tl/core";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { createHash, randomUUID } from "node:crypto";
 import { requireOwner, type AuthVars } from "./auth";
 import { sniffImage } from "./image";
@@ -11,17 +12,32 @@ import { generateToken, hashToken } from "./tokens";
 export interface RouteDeps {
   repository: Repository;
   store: ObjectStore;
+  /**
+   * The server's clock: every timestamp this service records comes from here.
+   * Injected so a test can order writes deterministically.
+   */
+  now?: () => Date;
 }
 
 /**
- * A ceiling on what gets *stored*, not on what gets received. The body is
- * buffered whole before this check runs — `sniffImage` and the checksum both
- * need the complete bytes — so a larger request still costs the memory to
- * receive in full, and this only stops the result being written to the object
- * store. Bounding the received size needs a limit enforced before buffering,
- * which nothing wires up; that gap belongs with the deploy.
+ * Ceilings on what a request may send, enforced while the body streams in —
+ * before any of it is buffered — so an oversized request costs at most this
+ * much memory and is refused with 413. A `Content-Length` over the limit is
+ * refused without reading anything.
+ *
+ * An upload needs its complete bytes (`sniffImage` and the checksum both read
+ * the whole file), which is why its limit is the one that matters most. A
+ * document's limit sits far above any list the editor produces; the per-field
+ * limits in `validateDocument` bound what a document may contain, and this
+ * bounds how much text a request may spend saying it.
  */
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
+const MAX_SMALL_BODY_BYTES = 16 * 1024;
+
+function limitBody(maxSize: number) {
+  return bodyLimit({ maxSize, onError: (c) => c.json({ error: "too large" }, 413) });
+}
 
 /**
  * Bounds on a browse request, so a public unauthenticated endpoint cannot be
@@ -86,16 +102,17 @@ function parseDocument(value: unknown): ParseResult {
 
 export function createRoutes(deps: RouteDeps) {
   const routes = new Hono<AuthVars>();
+  const now = deps.now ?? (() => new Date());
 
   /**
-   * The one place the server generates an id and reads the clock. The document
-   * model forbids both so reductions stay deterministic, but a token has no
-   * such requirement and no caller should be choosing its own identity.
+   * The server mints a token's identity itself. The document model forbids
+   * generating ids so reductions stay deterministic, but a token has no such
+   * requirement and no caller should be choosing its own identity.
    */
   routes.post("/tokens", async (c) => {
     const token = generateToken();
     const id = randomUUID();
-    await deps.repository.createToken(id, hashToken(token), new Date());
+    await deps.repository.createToken(id, hashToken(token), now());
     return c.json({ id, token }, 201);
   });
 
@@ -106,7 +123,7 @@ export function createRoutes(deps: RouteDeps) {
     return c.json({ lists });
   });
 
-  routes.put("/lists/:id", requireOwner(deps.repository), async (c) => {
+  routes.put("/lists/:id", limitBody(MAX_DOCUMENT_BYTES), requireOwner(deps.repository), async (c) => {
     const id = c.req.param("id");
     const body = await c.req.json().catch(() => null);
     const parsed = parseDocument((body as { document?: unknown })?.document);
@@ -117,8 +134,17 @@ export function createRoutes(deps: RouteDeps) {
     const doc = parsed.doc;
     if (doc.id !== id) return c.json({ error: "id mismatch" }, 400);
 
-    const created = await deps.repository.create(doc, c.get("ownerId"));
-    if (!created) return c.json({ error: "already exists" }, 409);
+    const ownerId = c.get("ownerId");
+    const created = await deps.repository.create(doc, ownerId, now());
+    if (!created) {
+      // A repeat of a create that already succeeded — the client never saw
+      // the response and sent it again — is answered as the first one was.
+      // Anything else under this id is a genuine collision.
+      const replay =
+        (await deps.repository.findOwner(id)) === ownerId &&
+        sameDocument((await deps.repository.load(id))!, doc);
+      if (!replay) return c.json({ error: "already exists" }, 409);
+    }
     return c.json({ id: doc.id, revision: doc.revision }, 201);
   });
 
@@ -129,7 +155,7 @@ export function createRoutes(deps: RouteDeps) {
     return c.json({ document: doc });
   });
 
-  routes.patch("/lists/:id", requireOwner(deps.repository), async (c) => {
+  routes.patch("/lists/:id", limitBody(MAX_DOCUMENT_BYTES), requireOwner(deps.repository), async (c) => {
     const id = c.req.param("id");
     const body = (await c.req.json().catch(() => null)) as {
       document?: unknown;
@@ -166,27 +192,30 @@ export function createRoutes(deps: RouteDeps) {
     }
 
     try {
-      await deps.repository.update(doc, expected, ownerId);
+      await deps.repository.update(doc, expected, ownerId, now());
     } catch (e) {
-      if (e instanceof RevisionConflictError) {
-        // Ownership is already established, so this can only be a stale
-        // revision. 409 tells the client to re-read and retry.
-        return c.json({ error: "revision conflict" }, 409);
+      if (!(e instanceof RevisionConflictError)) throw e;
+
+      // A write that already landed and is being sent again — its response
+      // was lost, so the client retries with the revision it expected the
+      // first time — finds the store already holding exactly this document.
+      // That is success, not a conflict: answering 409 would stop a client's
+      // saving for good over a response that merely went missing.
+      const stored = await deps.repository.load(id);
+      if (stored && sameDocument(stored, doc)) {
+        return c.json({ id: doc.id, revision: doc.revision });
       }
-      throw e;
+
+      // Ownership is already established, so this can only be a stale
+      // revision. 409 tells the client to re-read and retry.
+      return c.json({ error: "revision conflict" }, 409);
     }
 
     return c.json({ id: doc.id, revision: doc.revision });
   });
 
-  routes.post("/assets", requireOwner(deps.repository), async (c) => {
+  routes.post("/assets", limitBody(MAX_UPLOAD_BYTES), requireOwner(deps.repository), async (c) => {
     const body = new Uint8Array(await c.req.arrayBuffer());
-
-    // Checked after buffering rather than from the Content-Length header,
-    // because a header is a claim and a chunked request need not send one.
-    if (body.byteLength > MAX_UPLOAD_BYTES) {
-      return c.json({ error: "too large" }, 413);
-    }
 
     // The sole authority on what an upload is. The request's own content-type
     // is deliberately never read: it is a claim by the uploader, and trusting
@@ -229,7 +258,7 @@ export function createRoutes(deps: RouteDeps) {
       width: info.width,
       height: info.height,
       checksum,
-      createdAt: new Date(),
+      createdAt: now(),
     });
 
     return c.json(
@@ -299,7 +328,7 @@ export function createRoutes(deps: RouteDeps) {
    * The cost is that a client which cannot snapshot produces a link with a
    * title and no picture.
    */
-  routes.post("/lists/:id/share", requireOwner(deps.repository), async (c) => {
+  routes.post("/lists/:id/share", limitBody(MAX_SMALL_BODY_BYTES), requireOwner(deps.repository), async (c) => {
     // Hono types this as possibly undefined for a path with a segment *after*
     // the parameter (`/lists/:id/share`), unlike `/lists/:id`. It cannot
     // actually be undefined — the route would not have matched — but the guard
@@ -366,7 +395,7 @@ export function createRoutes(deps: RouteDeps) {
         ownerId,
         ogAssetId,
         listed: listed ?? false,
-        createdAt: new Date(),
+        createdAt: now(),
       });
       if (claimed) return c.json({ code, ogAssetId, listed: listed ?? false }, 201);
     }
@@ -377,8 +406,9 @@ export function createRoutes(deps: RouteDeps) {
    * Read a shared list by its code. Deliberately unauthenticated — the whole
    * point of a share code is that holding it is the authorisation.
    *
-   * Returns the document rather than a redirect to `/lists/:id`, so a reader
-   * never learns the list id and cannot use it against the owned endpoints.
+   * The document carries its own `id`, so a reader does learn the list id.
+   * That grants nothing a share does not: `GET /lists/:id` is public and
+   * returns the same document, and every write requires the owner's token.
    */
   routes.get("/shares/:code", async (c) => {
     const code = c.req.param("code");

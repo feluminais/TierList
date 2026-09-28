@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { MAX_TAG_LENGTH, MAX_TAGS } from "../src/categories";
 import { createTierList, defaultImageEdit } from "../src/factory";
 import { reduce } from "../src/reduce";
 import { startFill, toTemplate } from "../src/template";
 import { DEFAULT_STROKE_WIDTH, type TierList } from "../src/types";
-import { assertValidDocument, DocumentInvalidError, validateDocument } from "../src/validate";
+import {
+  assertValidDocument,
+  DOCUMENT_LIMITS,
+  DocumentInvalidError,
+  validateDocument,
+} from "../src/validate";
 
 const NOW = "2026-07-31T12:00:00.000Z";
 
@@ -251,6 +257,232 @@ describe("validateDocument: placement invariants", () => {
     expect(withPlacements([{ itemId: "t1", rowId: null, index: 0.5 }]).join("; ")).toMatch(
       /index/,
     );
+  });
+});
+
+/**
+ * Each limit is exercised at the boundary from both sides: the largest value
+ * it allows must pass and one past it must fail. A check that is off by one,
+ * or that tests the wrong field, fails one half.
+ */
+describe("validateDocument: limits", () => {
+  const L = DOCUMENT_LIMITS;
+  const doc = populated();
+  const rowId = doc.rows[0]!.id;
+  const imageIndex = doc.items.findIndex((i) => i.kind === "image");
+
+  function withRow(patch: Record<string, unknown>): string[] {
+    return validateDocument({
+      ...doc,
+      rows: doc.rows.map((r) => (r.id === rowId ? { ...r, ...patch } : r)),
+    });
+  }
+  function withItem(patch: Record<string, unknown>): string[] {
+    return validateDocument({
+      ...doc,
+      items: doc.items.map((it, at) => (at === imageIndex ? { ...it, ...patch } : it)),
+    });
+  }
+  function withStroke(patch: Record<string, unknown>): string[] {
+    const image = doc.items[imageIndex]!;
+    const stroke = { ...image.edit.strokes[0]!, ...patch };
+    return withItem({ edit: { ...image.edit, strokes: [stroke] } });
+  }
+  const text = (n: number) => "x".repeat(n);
+  const coordinates = (n: number) => Array.from({ length: n }, (_, i) => (i % 7) / 7);
+
+  const cases: {
+    name: string;
+    atLimit: () => string[];
+    pastLimit: () => string[];
+    match: RegExp;
+  }[] = [
+    {
+      name: "title length",
+      atLimit: () => validateDocument({ ...doc, title: text(L.titleLength) }),
+      pastLimit: () => validateDocument({ ...doc, title: text(L.titleLength + 1) }),
+      match: /title is too long/,
+    },
+    {
+      name: "description length",
+      atLimit: () => validateDocument({ ...doc, description: text(L.descriptionLength) }),
+      pastLimit: () => validateDocument({ ...doc, description: text(L.descriptionLength + 1) }),
+      match: /description is too long/,
+    },
+    {
+      name: "row label length",
+      atLimit: () => withRow({ label: text(L.rowLabelLength) }),
+      pastLimit: () => withRow({ label: text(L.rowLabelLength + 1) }),
+      match: /rows\[0\]\.label is too long/,
+    },
+    {
+      name: "item label length",
+      atLimit: () => withItem({ label: text(L.itemLabelLength) }),
+      pastLimit: () => withItem({ label: text(L.itemLabelLength + 1) }),
+      match: /label is too long/,
+    },
+    {
+      name: "tag count",
+      atLimit: () => validateDocument({ ...doc, tags: coordinates(MAX_TAGS).map((_, i) => `t${i}`) }),
+      pastLimit: () =>
+        validateDocument({ ...doc, tags: coordinates(MAX_TAGS + 1).map((_, i) => `t${i}`) }),
+      match: /tags must be at most/,
+    },
+    {
+      name: "tag length",
+      atLimit: () => validateDocument({ ...doc, tags: [text(MAX_TAG_LENGTH)] }),
+      pastLimit: () => validateDocument({ ...doc, tags: [text(MAX_TAG_LENGTH + 1)] }),
+      match: /tags must be at most/,
+    },
+    {
+      name: "row tile size",
+      atLimit: () => withRow({ tileSizeOverride: L.tileSize }),
+      pastLimit: () => withRow({ tileSizeOverride: L.tileSize + 1 }),
+      match: /tileSizeOverride/,
+    },
+    {
+      name: "list tile size",
+      atLimit: () => validateDocument({ ...doc, display: { ...doc.display, tileSize: L.tileSize } }),
+      pastLimit: () =>
+        validateDocument({ ...doc, display: { ...doc.display, tileSize: L.tileSize + 1 } }),
+      match: /display\.tileSize/,
+    },
+    {
+      name: "label width",
+      atLimit: () =>
+        validateDocument({ ...doc, display: { ...doc.display, labelWidth: L.labelWidth } }),
+      pastLimit: () =>
+        validateDocument({ ...doc, display: { ...doc.display, labelWidth: L.labelWidth + 1 } }),
+      match: /display\.labelWidth/,
+    },
+    {
+      name: "stroke coordinates",
+      atLimit: () => withStroke({ points: coordinates(L.strokeCoordinates) }),
+      pastLimit: () => withStroke({ points: coordinates(L.strokeCoordinates + 2) }),
+      match: /points must hold at most/,
+    },
+    {
+      name: "strokes on one surface",
+      atLimit: () =>
+        validateDocument({
+          ...doc,
+          boardAnnotations: coordinates(L.strokesPerSurface).map((_, i) => ({
+            id: `b${i}`,
+            points: [0, 0, 1, 1],
+            color: "#4ade80",
+            width: 0.01,
+          })),
+        }),
+      pastLimit: () =>
+        validateDocument({
+          ...doc,
+          boardAnnotations: coordinates(L.strokesPerSurface + 1).map((_, i) => ({
+            id: `b${i}`,
+            points: [0, 0, 1, 1],
+            color: "#4ade80",
+            width: 0.01,
+          })),
+        }),
+      match: /boardAnnotations must number at most/,
+    },
+    {
+      name: "id length",
+      atLimit: () => validateDocument({ ...doc, id: text(L.idLength) }),
+      pastLimit: () => validateDocument({ ...doc, id: text(L.idLength + 1) }),
+      match: /^id is too long|; id is too long/,
+    },
+  ];
+
+  it.each(cases)("accepts $name at its limit", ({ atLimit }) => {
+    expect(atLimit()).toEqual([]);
+  });
+
+  it.each(cases)("rejects $name one past its limit", ({ pastLimit, match }) => {
+    expect(pastLimit().join("; ")).toMatch(match);
+  });
+
+  it("rejects more rows than the limit", () => {
+    const rows = Array.from({ length: L.rows + 1 }, (_, i) => ({
+      ...doc.rows[0]!,
+      id: `r${i}`,
+      order: i,
+    }));
+    expect(validateDocument({ ...doc, rows, placements: [] }).join("; ")).toMatch(
+      /rows must number at most/,
+    );
+  });
+
+  it("rejects more items than the limit", () => {
+    const items = Array.from({ length: L.items + 1 }, (_, i) => ({
+      id: `t${i}`,
+      kind: "text",
+      label: "x",
+      edit: defaultImageEdit(),
+      order: i,
+    }));
+    expect(validateDocument({ ...doc, items, placements: [] }).join("; ")).toMatch(
+      /items must number at most/,
+    );
+  });
+});
+
+/**
+ * Colours are written into inline styles on public, server-rendered pages, so
+ * anything that is not a plain hex colour could end a declaration and start
+ * another. Each case below is valid CSS somewhere and must still be refused.
+ */
+describe("validateDocument: colour format", () => {
+  const doc = populated();
+  const recolour = (color: string) =>
+    validateDocument({
+      ...doc,
+      rows: doc.rows.map((r, i) => (i === 2 ? { ...r, color } : r)),
+    });
+
+  it.each(["#fff", "#39B7FF", "#39b7ff80"])("accepts %s", (color) => {
+    expect(recolour(color)).toEqual([]);
+  });
+
+  it.each([
+    "red",
+    "#ff4d4d; background:url(https://example.com/x)",
+    "rgb(255,0,0)",
+    "#ff4d4",
+    "#gggggg",
+    " #ff4d4d",
+    "var(--x)",
+  ])("rejects %j", (color) => {
+    expect(recolour(color).join("; ")).toMatch(/rows\[2\]\.color must be a hex colour/);
+  });
+
+  it("applies the same format to strokes", () => {
+    const image = doc.items.find((i) => i.kind === "image")!;
+    const items = doc.items.map((it) =>
+      it.id === image.id
+        ? {
+            ...it,
+            edit: {
+              ...it.edit,
+              strokes: [{ ...it.edit.strokes[0]!, color: "red;x:y" }],
+            },
+          }
+        : it,
+    );
+    expect(validateDocument({ ...doc, items }).join("; ")).toMatch(/color must be a hex colour/);
+  });
+});
+
+/**
+ * The shape of a category id, never its membership: a list filed under a
+ * category that is later retired must stay saveable.
+ */
+describe("validateDocument: category id", () => {
+  it.each(["anime", "board-games", "zz-retired-9"])("accepts %j", (categoryId) => {
+    expect(validateDocument({ ...base(), categoryId })).toEqual([]);
+  });
+
+  it.each(["", "Anime", "anime films", "a".repeat(33), "<script>"])("rejects %j", (categoryId) => {
+    expect(validateDocument({ ...base(), categoryId }).join("; ")).toMatch(/categoryId/);
   });
 });
 

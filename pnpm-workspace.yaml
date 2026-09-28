@@ -3,18 +3,18 @@ packages:
   - "packages/*"
   - "services/*"
 
-# Required by the Android native build, not a preference.
+# Keeps native-module paths short for the Android build, not a preference.
 #
-# pnpm's default isolated layout stores packages under paths like
-#   node_modules/.pnpm/@shopify+react-native-skia@_bc3feb.../node_modules/...
-# CMake's dependency tracking cannot cope with the `+` and `@` characters pnpm
-# uses to encode scoped names, so it regenerates build.ninja forever and ninja
-# aborts with "manifest 'build.ninja' still dirty after 100 tries". This hit
-# every native module (Skia, react-native-screens, ...), not just one.
+# pnpm's default isolated layout nests every package under a path like
+#   node_modules/.pnpm/@shopify+react-native-skia@<version>_<hash>/node_modules/...
+# and the Android CMake builds of native modules produce object paths deeper
+# still. On Windows the ninja bundled with the SDK's default CMake cannot handle
+# paths past 260 characters, and fails with "manifest 'build.ninja' still dirty
+# after 100 tries". Hoisting flattens node_modules to an npm-style layout and
+# takes that nesting out of every path.
 #
-# Hoisting flattens node_modules to an npm-style layout, removing those
-# characters from the paths CMake sees. The Expo/Skia template ships this same
-# setting in its own generated workspace file — the template author hit this too.
+# Necessary, not sufficient: from the long path of a git worktree the build
+# still fails. See "Android: the native build" in docs/superpowers/BACKLOG.md.
 #
 # Cost: weaker protection against phantom dependencies, since hoisting makes
 # undeclared packages resolvable. The `overrides` block below is what keeps

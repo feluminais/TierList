@@ -144,3 +144,37 @@ export const shares = pgTable(
 
 export type ShareRow = typeof shares.$inferSelect;
 export type NewShareRow = typeof shares.$inferInsert;
+
+/**
+ * Why a share has been reported.
+ *
+ * A report is a row an operator reads and acts on; nothing here removes
+ * anything by itself. It belongs to a share, so withdrawing the share (the
+ * owner's, or an operator's) removes its reports with it: the content they
+ * point at is gone.
+ *
+ * Nothing about the reporter is stored. The endpoint is anonymous and
+ * rate-limited, and an address kept beside an accusation is data nobody here
+ * needs.
+ */
+export const reports = pgTable(
+  "reports",
+  {
+    id: text("id").primaryKey(),
+    shareCode: text("share_code")
+      .notNull()
+      .references(() => shares.code, { onDelete: "cascade" }),
+    reason: text("reason").notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    /** Set when an operator has dealt with it; null while it is waiting. */
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("reports_share_idx").on(t.shareCode),
+    index("reports_open_idx").on(t.resolvedAt),
+  ],
+);
+
+export type ReportRow = typeof reports.$inferSelect;
+export type NewReportRow = typeof reports.$inferInsert;

@@ -36,6 +36,11 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
 const MAX_SMALL_BODY_BYTES = 16 * 1024;
 
+/** Why a share may be reported. A closed set, so an operator can sort by it. */
+export const REPORT_REASONS = ["illegal", "abuse", "copyright", "spam", "other"] as const;
+export type ReportReason = (typeof REPORT_REASONS)[number];
+const MAX_REPORT_NOTE_LENGTH = 500;
+
 function limitBody(maxSize: number) {
   return bodyLimit({ maxSize, onError: (c) => c.json({ error: "too large" }, 413) });
 }
@@ -163,7 +168,7 @@ export function createRoutes(deps: RouteDeps) {
   // Deliberately unauthenticated: sharing a link to a tier list is the point.
   routes.get("/lists/:id", async (c) => {
     const id = c.req.param("id");
-    if (!isStorableText(id)) return c.json({ error: "not found" }, 404);
+    if (!id || !isStorableText(id)) return c.json({ error: "not found" }, 404);
 
     const doc = await deps.repository.load(id);
     if (!doc) return c.json({ error: "not found" }, 404);
@@ -227,6 +232,29 @@ export function createRoutes(deps: RouteDeps) {
     }
 
     return c.json({ id: doc.id, revision: doc.revision });
+  });
+
+  /**
+   * Removes a list and what only it used: its share and the images no other
+   * document or share preview refers to. Unknown id and someone else's id give
+   * the same 404, as PATCH and share do, so this cannot be used to learn which
+   * ids exist.
+   *
+   * The database is the truth and is changed first, in one transaction; the
+   * bytes of the images it removed are deleted afterwards and a failure there
+   * is only an unreferenced object left behind, which nothing can read.
+   */
+  routes.delete("/lists/:id", requireOwner(deps.repository), async (c) => {
+    const id = c.req.param("id");
+    if (!id || !isStorableText(id)) return c.json({ error: "not found" }, 404);
+
+    const result = await deps.repository.deleteList(id, c.get("ownerId"));
+    if (!result) return c.json({ error: "not found" }, 404);
+
+    await Promise.all(
+      result.removedAssets.map((asset) => deps.store.delete(asset.storageKey).catch(() => undefined)),
+    );
+    return c.body(null, 204);
   });
 
   routes.post("/assets", limitBody(MAX_UPLOAD_BYTES), requireOwner(deps.repository), async (c) => {
@@ -414,6 +442,64 @@ export function createRoutes(deps: RouteDeps) {
       if (claimed) return c.json({ code, ogAssetId, listed: listed ?? false }, 201);
     }
     return c.json({ error: "could not allocate a share code" }, 500);
+  });
+
+  /**
+   * Withdraws a list's public link and its listing. The list itself is
+   * untouched, and sharing it again mints a new code: the old one stays dead,
+   * which is what withdrawing a link means.
+   */
+  routes.delete("/lists/:id/share", requireOwner(deps.repository), async (c) => {
+    const id = c.req.param("id");
+    if (!id || !isStorableText(id)) return c.json({ error: "not found" }, 404);
+
+    const removed = await deps.repository.deleteShareOfList(id, c.get("ownerId"));
+    if (!removed) return c.json({ error: "not found" }, 404);
+    return c.body(null, 204);
+  });
+
+  /**
+   * Anyone holding a share's link may report it; no token is needed, because
+   * the people who run into content that should not be public are the people
+   * who were sent a link. A report only records. Acting on it is an operator's
+   * decision, made from the database.
+   */
+  routes.post("/reports", limitBody(MAX_SMALL_BODY_BYTES), async (c) => {
+    const body = (await c.req.json().catch(() => null)) as {
+      code?: unknown;
+      reason?: unknown;
+      note?: unknown;
+    } | null;
+    if (!body || typeof body !== "object") return c.json({ error: "invalid report" }, 400);
+
+    const { code, reason, note } = body;
+    if (typeof code !== "string") return c.json({ error: "code is required" }, 400);
+    if (typeof reason !== "string" || !(REPORT_REASONS as readonly string[]).includes(reason)) {
+      return c.json({ error: "unknown reason" }, 400);
+    }
+    if (
+      note !== undefined &&
+      note !== null &&
+      (typeof note !== "string" || note.length > MAX_REPORT_NOTE_LENGTH || !isStorableText(note))
+    ) {
+      return c.json({ error: "invalid note" }, 400);
+    }
+
+    // Checked after the body, so a report that is malformed is a 400 whether
+    // or not the code exists.
+    if (!isPlausibleShareCode(code) || !(await deps.repository.findShareByCode(code))) {
+      return c.json({ error: "not found" }, 404);
+    }
+
+    const id = randomUUID();
+    await deps.repository.createReport({
+      id,
+      shareCode: code,
+      reason,
+      note: typeof note === "string" && note.length > 0 ? note : null,
+      createdAt: now(),
+    });
+    return c.json({ id }, 201);
   });
 
   /**

@@ -1,15 +1,18 @@
 import { migrate, type TierList } from "@tl/core";
-import { and, desc, eq, ilike, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   assets,
   deviceTokens,
+  reports,
   shares,
   tierLists,
   type AssetRow,
   type NewAssetRow,
+  type NewReportRow,
   type NewShareRow,
   type NewTierListRow,
+  type ReportRow,
   type ShareRow,
 } from "./schema";
 
@@ -45,6 +48,34 @@ export interface Repository {
     ownerId: string,
     now?: Date,
   ) => Promise<void>;
+  /**
+   * Removes a list the owner holds, its share (and that share's reports), and
+   * every image of the owner's that nothing else still uses. Returns null,
+   * changing nothing, when the id is unknown or belongs to someone else, and
+   * otherwise the removed images so the caller can delete their bytes.
+   *
+   * An image stays while any other document or any share's preview refers to
+   * it, whoever owns that document: a fill is a copy of a template and keeps
+   * pointing at the template author's images. Only the list owner's own
+   * images are ever removed.
+   */
+  deleteList: (
+    id: string,
+    ownerId: string,
+  ) => Promise<{ removedAssets: { id: string; storageKey: string }[] } | null>;
+  /**
+   * Withdraws the owner's share of a list, with its reports. Returns false when
+   * the list has no share or is not the owner's. A later share of the same list
+   * gets a new code.
+   */
+  deleteShareOfList: (listId: string, ownerId: string) => Promise<boolean>;
+  /** Withdraws a share by its code, whoever owns it. For an operator. */
+  deleteShareByCode: (code: string) => Promise<boolean>;
+  createReport: (row: NewReportRow) => Promise<void>;
+  /** Reports, oldest first. `open` keeps only those not yet resolved. */
+  listReports: (filter: { open?: boolean }) => Promise<ReportRow[]>;
+  /** Marks a report handled. Returns false when there is no such report. */
+  resolveReport: (id: string, now: Date) => Promise<boolean>;
   /**
    * The owner of a stored document, or null when the id is unknown. Exists so a
    * route can tell "not yours" from "stale revision" *before* attempting an
@@ -232,6 +263,91 @@ export function createRepository(db: Db): Repository {
       if (updated.length === 0) {
         throw new RevisionConflictError(doc.id, expectedRevision);
       }
+    },
+
+    async deleteList(id, ownerId) {
+      return db.transaction(async (tx) => {
+        const found = await tx
+          .select({ document: tierLists.document })
+          .from(tierLists)
+          .where(and(eq(tierLists.id, id), eq(tierLists.ownerId, ownerId)))
+          .limit(1);
+        const row = found[0];
+        if (!row) return null;
+
+        const candidates = new Set<string>();
+        for (const item of migrate(row.document).items) {
+          if (item.assetId) candidates.add(item.assetId);
+        }
+        const listShares = await tx.select().from(shares).where(eq(shares.listId, id));
+        for (const share of listShares) {
+          if (share.ogAssetId) candidates.add(share.ogAssetId);
+        }
+
+        // Reports go with their share, by the foreign key's cascade.
+        await tx.delete(shares).where(eq(shares.listId, id));
+        await tx.delete(tierLists).where(eq(tierLists.id, id));
+
+        const removedAssets: { id: string; storageKey: string }[] = [];
+        for (const assetId of candidates) {
+          const usedByDocument = await tx
+            .select({ id: tierLists.id })
+            .from(tierLists)
+            .where(
+              sql`jsonb_path_exists(${tierLists.document}, '$.items[*] ? (@.assetId == $id)', jsonb_build_object('id', ${assetId}::text))`,
+            )
+            .limit(1);
+          if (usedByDocument.length > 0) continue;
+
+          const usedByShare = await tx
+            .select({ code: shares.code })
+            .from(shares)
+            .where(eq(shares.ogAssetId, assetId))
+            .limit(1);
+          if (usedByShare.length > 0) continue;
+
+          const removed = await tx
+            .delete(assets)
+            .where(and(eq(assets.id, assetId), eq(assets.ownerId, ownerId)))
+            .returning({ id: assets.id, storageKey: assets.storageKey });
+          removedAssets.push(...removed);
+        }
+        return { removedAssets };
+      });
+    },
+
+    async deleteShareOfList(listId, ownerId) {
+      const removed = await db
+        .delete(shares)
+        .where(and(eq(shares.listId, listId), eq(shares.ownerId, ownerId)))
+        .returning({ code: shares.code });
+      return removed.length > 0;
+    },
+
+    async deleteShareByCode(code) {
+      const removed = await db.delete(shares).where(eq(shares.code, code)).returning({ code: shares.code });
+      return removed.length > 0;
+    },
+
+    async createReport(row) {
+      await db.insert(reports).values(row);
+    },
+
+    async listReports({ open }) {
+      const query = db.select().from(reports);
+      return (open ? query.where(isNull(reports.resolvedAt)) : query).orderBy(
+        asc(reports.createdAt),
+        asc(reports.id),
+      );
+    },
+
+    async resolveReport(id, now) {
+      const updated = await db
+        .update(reports)
+        .set({ resolvedAt: now })
+        .where(eq(reports.id, id))
+        .returning({ id: reports.id });
+      return updated.length > 0;
     },
 
     async findOwner(id) {

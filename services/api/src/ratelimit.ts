@@ -121,7 +121,8 @@ export type RouteClass =
   | "reads"
   | "assetReads"
   | "writes"
-  | "uploads";
+  | "uploads"
+  | "reports";
 
 const MINUTE = 60_000;
 
@@ -144,6 +145,7 @@ export const DEFAULT_RATE_LIMITS: Record<RouteClass, RateLimit> = {
   assetReads: { limit: 600, windowMs: MINUTE },
   writes: { limit: 120, windowMs: MINUTE },
   uploads: { limit: 30, windowMs: MINUTE },
+  reports: { limit: 10, windowMs: MINUTE },
 };
 
 /** Which routes belong to which class. A route not listed here is not limited. */
@@ -155,7 +157,11 @@ const LIMITED_ROUTES: readonly { class: RouteClass; method: string; path: string
   { class: "reads", method: "GET", path: "/browse" },
   { class: "assetReads", method: "GET", path: "/assets/:id" },
   { class: "writes", method: "PUT", path: "/lists/:id" },
+  { class: "writes", method: "PATCH", path: "/lists/:id" },
+  { class: "writes", method: "DELETE", path: "/lists/:id" },
   { class: "writes", method: "POST", path: "/lists/:id/share" },
+  { class: "writes", method: "DELETE", path: "/lists/:id/share" },
+  { class: "reports", method: "POST", path: "/reports" },
   { class: "uploads", method: "POST", path: "/assets" },
 ];
 

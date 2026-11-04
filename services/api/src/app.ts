@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { internalError, requestLogging, type LogSink } from "./observe";
+import { applyRateLimits, type RateLimit, type RouteClass } from "./ratelimit";
 import { createRoutes, type RouteDeps } from "./routes";
 
 export interface AppOptions {
@@ -21,6 +22,10 @@ export interface AppOptions {
   clock?: () => number;
   /** How long `/health` waits for the database before answering 503. */
   healthTimeoutMs?: number;
+  /** Overrides for the per-class request limits; see `DEFAULT_RATE_LIMITS`. */
+  rateLimits?: Partial<Record<RouteClass, RateLimit>>;
+  /** Reverse proxies in front of this process, for reading the client address. Default 0. */
+  trustedProxyHops?: number;
 }
 
 const DEFAULT_HEALTH_TIMEOUT_MS = 2000;
@@ -61,6 +66,13 @@ export function buildApp(deps?: RouteDeps, options: AppOptions = {}) {
    * one more place to update the day a header is added.
    */
   app.use("*", options.allowedOrigins ? cors({ origin: [...options.allowedOrigins] }) : cors());
+
+  // After CORS, so a 429 carries the headers a browser needs to read it.
+  applyRateLimits(app, {
+    limits: options.rateLimits,
+    trustedProxyHops: options.trustedProxyHops,
+    clock: options.clock ?? Date.now,
+  });
 
   // With a repository, healthy means the database answers: a process whose
   // pool is dead still serves static answers, and a load balancer that only

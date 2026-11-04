@@ -54,8 +54,7 @@ describe("request logging", () => {
 
   const options = () => ({
     log: (entry: Entry) => entries.push(entry),
-    // Each reading advances 7ms, so a request's duration is a known number.
-    clock: () => (tick += 7),
+    clock: () => tick,
   });
 
   beforeEach(async () => {
@@ -70,7 +69,15 @@ describe("request logging", () => {
   });
 
   it("writes one line per request, with the route pattern rather than the path", async () => {
-    const app = buildApp({ repository, store: createMemoryStore() }, options());
+    // Looking the list up takes 7ms on the clock, so the duration is known.
+    const slow: Repository = {
+      ...repository,
+      load: async () => {
+        tick += 7;
+        return null;
+      },
+    };
+    const app = buildApp({ repository: slow, store: createMemoryStore() }, options());
     const res = await app.request("/lists/some-private-id");
     expect(res.status).toBe(404);
 

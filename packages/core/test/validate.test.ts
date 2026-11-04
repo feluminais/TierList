@@ -110,6 +110,56 @@ describe("validateDocument: field types", () => {
   });
 });
 
+/**
+ * Postgres stores the whole document as jsonb and refuses both of these, so each
+ * has to stop here as a client error wherever in the document it sits.
+ */
+describe("validateDocument: text Postgres cannot store", () => {
+  const NUL = "a\0b";
+  const LONE_HIGH = "a\ud83d";
+  const LONE_LOW = "\ude00b";
+
+  const withRowLabel = (label: string): TierList => {
+    const doc = populated();
+    const [first, ...rest] = doc.rows;
+    return { ...doc, rows: [{ ...first!, label }, ...rest] };
+  };
+
+  const cases: { name: string; doc: unknown; path: RegExp }[] = [
+    { name: "a NUL in the title", doc: { ...base(), title: NUL }, path: /^title / },
+    { name: "a NUL in a nested label", doc: withRowLabel(NUL), path: /^rows\[0\]\.label / },
+    { name: "a NUL in an unknown field", doc: { ...base(), extra: [{ note: NUL }] }, path: /^extra\[0\]\.note / },
+    { name: "a NUL in a key", doc: { ...base(), extra: { [NUL]: 1 } }, path: /^extra / },
+    { name: "a lone high surrogate", doc: { ...base(), title: LONE_HIGH }, path: /^title / },
+    { name: "a lone low surrogate", doc: { ...base(), description: LONE_LOW }, path: /^description / },
+  ];
+
+  it.each(cases)("rejects $name and names where it is", ({ doc, path }) => {
+    const problems = validateDocument(doc);
+    expect(problems.some((p) => path.test(p))).toBe(true);
+  });
+
+  it("names every string that cannot be stored", () => {
+    const problems = validateDocument({ ...base(), title: NUL, description: LONE_HIGH });
+    expect(problems.filter((p) => /cannot be stored/.test(p))).toHaveLength(2);
+  });
+
+  it("accepts a surrogate pair", () => {
+    expect(validateDocument({ ...base(), title: "ranked 😀" })).toEqual([]);
+  });
+
+  it("accepts text that only spells out an escape", () => {
+    expect(validateDocument({ ...base(), title: "\\u0000" })).toEqual([]);
+  });
+
+  it("survives nesting deeper than the call stack", () => {
+    let extra: unknown = NUL;
+    for (let depth = 0; depth < 200_000; depth++) extra = [extra];
+    const problems = validateDocument({ ...base(), extra });
+    expect(problems.join("; ")).toMatch(/cannot be stored/);
+  });
+});
+
 describe("validateDocument: rows and items", () => {
   it("rejects duplicate row ids", () => {
     const doc = base();

@@ -109,6 +109,37 @@ describe("request size limits", () => {
 });
 
 /**
+ * Text Postgres refuses to hold is a fault in the request, so it answers 400
+ * rather than surfacing as the 500 reserved for the database actually failing.
+ */
+describe("text Postgres cannot store", () => {
+  it.each([
+    { name: "a NUL", title: "a\0b" },
+    { name: "a lone surrogate", title: "a\ud83d" },
+  ])("refuses a new list with $name in its title", async ({ title }) => {
+    const token = await mint();
+    const res = await put(token, { ...createTierList({ id: "list-1", now: NOW }), title });
+
+    expect(res.status).toBe(400);
+    expect((await app.request("/lists/list-1")).status).toBe(404);
+  });
+
+  it("refuses an update with a NUL in its title and keeps the stored list", async () => {
+    const token = await mint();
+    const doc = createTierList({ id: "list-1", now: NOW });
+    await put(token, doc);
+
+    const next = { ...doc, title: "a\0b", revision: doc.revision + 1 };
+    const res = await patch(token, next, doc.revision, doc.id);
+
+    expect(res.status).toBe(400);
+    const stored = (await (await app.request("/lists/list-1")).json()) as { document: TierList };
+    expect(stored.document.title).toBe(doc.title);
+    expect(stored.document.revision).toBe(doc.revision);
+  });
+});
+
+/**
  * Browse and "my lists" order by the row's timestamp. It is the server's record
  * of when it stored the row, never the author's own claim, or anyone could pin
  * a list to the top of a public page by dating it in the future.

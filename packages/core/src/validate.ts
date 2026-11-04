@@ -21,6 +21,14 @@ const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const CATEGORY_ID = /^[a-z0-9-]{1,32}$/;
 
 /**
+ * Text Postgres refuses to hold: NUL, which neither `text` nor `jsonb` can
+ * represent, and a surrogate with no partner, which `jsonb` rejects. Under the
+ * `u` flag a surrogate pair reads as one code point, so this range matches only
+ * a lone surrogate and leaves emoji alone.
+ */
+const UNSTORABLE_TEXT = /[\0\ud800-\udfff]/u;
+
+/**
  * Raised for a document that is structurally unusable. `problems` names every
  * fault found rather than only the first, so one round trip tells a caller
  * everything it has to fix.
@@ -186,6 +194,7 @@ export function validateDocument(raw: unknown): string[] {
   checkStrokes(doc["boardAnnotations"], "boardAnnotations", fail);
   checkDisplay(doc["display"], fail);
   checkPlacements(doc["placements"], rowIds, itemIds, fail);
+  checkStorableText(doc, fail);
 
   return problems;
 }
@@ -194,6 +203,34 @@ export function validateDocument(raw: unknown): string[] {
 export function assertValidDocument(raw: unknown): asserts raw is TierList {
   const problems = validateDocument(raw);
   if (problems.length > 0) throw new DocumentInvalidError(problems);
+}
+
+/**
+ * Every string in the document, keys included. The API stores the whole value
+ * as `jsonb`, unknown fields too, so a walk over the fields this module names
+ * would leave the rest to fail as a server error.
+ *
+ * Iterative because the depth is the sender's: a body can nest deeper than the
+ * call stack, and a recursive walk would turn that into a server error as well.
+ */
+function checkStorableText(root: Record<string, unknown>, fail: (m: string) => void): void {
+  const pending: { value: unknown; path: string }[] = [{ value: root, path: "" }];
+
+  for (let next = pending.pop(); next; next = pending.pop()) {
+    const { value, path } = next;
+    if (typeof value === "string") {
+      if (UNSTORABLE_TEXT.test(value)) fail(`${path} holds text that cannot be stored`);
+    } else if (Array.isArray(value)) {
+      value.forEach((entry, at) => pending.push({ value: entry, path: `${path}[${at}]` }));
+    } else if (isRecord(value)) {
+      for (const [key, entry] of Object.entries(value)) {
+        if (UNSTORABLE_TEXT.test(key)) {
+          fail(`${path || "document"} has a key that cannot be stored`);
+        }
+        pending.push({ value: entry, path: path ? `${path}.${key}` : key });
+      }
+    }
+  }
 }
 
 function checkEdit(value: unknown, path: string, fail: (m: string) => void): void {

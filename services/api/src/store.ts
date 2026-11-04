@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export interface StoredObject {
@@ -16,6 +16,8 @@ export interface StoredObject {
 export interface ObjectStore {
   put: (key: string, bytes: Uint8Array, contentType: string) => Promise<void>;
   get: (key: string) => Promise<StoredObject | null>;
+  /** Removes a key. Removing one that is not there is done, not an error. */
+  delete: (key: string) => Promise<void>;
 }
 
 /**
@@ -63,6 +65,11 @@ export function createMemoryStore(): ObjectStore {
       if (!found) return null;
       return { bytes: new Uint8Array(found.bytes), contentType: found.contentType };
     },
+
+    async delete(key) {
+      assertSafeKey(key);
+      objects.delete(key);
+    },
   };
 }
 
@@ -98,6 +105,19 @@ export function createFileStore(root: string): ObjectStore {
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
         throw e;
+      }
+    },
+
+    async delete(key) {
+      assertSafeKey(key);
+      // The sidecar goes first: a `.bin` with no `.type` reads as a miss, so a
+      // delete interrupted between the two leaves nothing a reader can fetch.
+      for (const suffix of [".type", ".bin"]) {
+        try {
+          await unlink(resolve(key, suffix));
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+        }
       }
     },
   };

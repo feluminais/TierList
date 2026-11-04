@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { requireOwner, type AuthVars } from "./auth";
 import { sniffImage } from "./image";
 import { RevisionConflictError, type Repository } from "./repository";
+import type { AssetRow } from "./schema";
 import { generateShareCode, isPlausibleShareCode } from "./sharecode";
 import type { ObjectStore } from "./store";
 import { generateToken, hashToken } from "./tokens";
@@ -69,6 +70,17 @@ const MAX_SEARCH_LENGTH = 80;
 const MAX_ASSET_ID_LENGTH = 256;
 function isPlausibleAssetId(id: string): boolean {
   return id.length > 0 && id.length <= MAX_ASSET_ID_LENGTH && isStorableText(id);
+}
+
+/** What an upload answers with: the asset's id and what its bytes are. */
+function assetBody(row: AssetRow) {
+  return {
+    id: row.id,
+    contentType: row.contentType,
+    width: row.width,
+    height: row.height,
+    byteSize: row.byteSize,
+  };
 }
 
 /** A parsed document, or the reasons it was refused. */
@@ -232,18 +244,7 @@ export function createRoutes(deps: RouteDeps) {
     // Adding the same picture to a list twice is ordinary. Returning the asset
     // the owner already has costs one lookup and saves a second copy.
     const existing = await deps.repository.findAssetByChecksum(ownerId, checksum);
-    if (existing) {
-      return c.json(
-        {
-          id: existing.id,
-          contentType: existing.contentType,
-          width: existing.width,
-          height: existing.height,
-          byteSize: existing.byteSize,
-        },
-        200,
-      );
-    }
+    if (existing) return c.json(assetBody(existing), 200);
 
     const id = randomUUID();
     const storageKey = `assets/${id}`;
@@ -252,7 +253,7 @@ export function createRoutes(deps: RouteDeps) {
     // render as a permanently broken tile, whereas an orphaned object is
     // invisible and costs only space.
     await deps.store.put(storageKey, body, info.contentType);
-    await deps.repository.createAsset({
+    const created = await deps.repository.createAsset({
       id,
       ownerId,
       storageKey,
@@ -263,6 +264,16 @@ export function createRoutes(deps: RouteDeps) {
       checksum,
       createdAt: now(),
     });
+
+    if (!created) {
+      // A concurrent upload of the same bytes by this owner got its row in
+      // first. Those bytes are what the winner's asset serves; ours are an
+      // unreferenced copy, removed so they cost nothing.
+      await deps.store.delete(storageKey).catch(() => undefined);
+      const winner = await deps.repository.findAssetByChecksum(ownerId, checksum);
+      if (!winner) return c.json({ error: "upload raced, retry" }, 409);
+      return c.json(assetBody(winner), 200);
+    }
 
     return c.json(
       {

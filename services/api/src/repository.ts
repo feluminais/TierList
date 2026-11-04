@@ -55,8 +55,12 @@ export interface Repository {
   /** Stores a minted token by its hash. The raw token never reaches here. */
   createToken: (id: string, tokenHash: string, now: Date) => Promise<void>;
   findTokenId: (tokenHash: string) => Promise<string | null>;
-  /** Records an upload whose bytes are already in the object store. */
-  createAsset: (row: NewAssetRow) => Promise<void>;
+  /**
+   * Records an upload whose bytes are already in the object store. Returns
+   * false, changing nothing, when the owner already holds an asset with the
+   * same checksum — the loser of a race between two identical uploads.
+   */
+  createAsset: (row: NewAssetRow) => Promise<boolean>;
   findAsset: (id: string) => Promise<AssetRow | null>;
   /**
    * An owner's existing asset with these exact bytes, if any. Scoped to the
@@ -261,7 +265,12 @@ export function createRepository(db: Db): Repository {
     },
 
     async createAsset(row) {
-      await db.insert(assets).values(row);
+      const inserted = await db
+        .insert(assets)
+        .values(row)
+        .onConflictDoNothing({ target: [assets.ownerId, assets.checksum] })
+        .returning({ id: assets.id });
+      return inserted.length > 0;
     },
 
     async findAsset(id) {

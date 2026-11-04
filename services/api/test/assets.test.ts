@@ -90,29 +90,18 @@ describe("asset repository", () => {
     expect((await repository.findAssetByChecksum("owner-2", "abc123"))?.id).toBe("asset-2");
   });
 
-  // createAsset does no conflict handling, so the only thing standing between
-  // a raced double-upload and two rows for the same bytes is this unique
-  // index rejecting the second insert outright. The route is expected to
-  // check findAssetByChecksum first, so this only fires under a genuine race
-  // — pinned here so a future refactor can't silently turn it into a second
-  // row instead of a rejection.
-  it("rejects a second asset from the same owner with the same checksum", async () => {
-    await repository.createAsset(asset());
+  // The unique index on (owner, checksum) is what stands between a raced
+  // double-upload and two rows for the same bytes. `createAsset` reports the
+  // loss as `false` rather than throwing, so the route can answer the loser
+  // with the winner's asset.
+  it("reports false, and keeps one row, for a second asset with the same owner and checksum", async () => {
+    expect(await repository.createAsset(asset())).toBe(true);
+    expect(
+      await repository.createAsset(asset({ id: "asset-2", storageKey: "assets/asset-2" })),
+    ).toBe(false);
 
-    let caught: unknown;
-    try {
-      await repository.createAsset(asset({ id: "asset-2", storageKey: "assets/asset-2" }));
-    } catch (e) {
-      caught = e;
-    }
-
-    // Drizzle wraps the driver error, so the useful detail — the Postgres
-    // unique_violation code and the constraint name — lives on `.cause`, not
-    // on the thrown error's own message.
-    expect(caught).toBeDefined();
-    const cause = (caught as { cause?: { code?: string; constraint?: string } }).cause;
-    expect(cause?.code).toBe("23505");
-    expect(cause?.constraint).toBe("assets_owner_checksum_idx");
+    expect(await repository.findAsset("asset-2")).toBeNull();
+    expect((await repository.findAssetByChecksum("owner-1", "abc123"))?.id).toBe("asset-1");
   });
 });
 
@@ -217,26 +206,50 @@ describe("POST /assets", () => {
 
   /**
    * The route checks findAssetByChecksum before inserting, but that check and
-   * the insert are not one atomic step. Two concurrent uploads of the same
-   * bytes by the same owner can both miss the check and both attempt to
-   * insert; the unique index (assets_owner_checksum_idx) then rejects the
-   * second insert with Postgres error 23505, uncaught, which Hono's default
-   * error handler turns into a bare 500. That is a defensible outcome — the
-   * race is rare and the client can just retry the upload, which will now
-   * hit the dedupe path and get the winner's asset back — but only if it
-   * stays exactly this and doesn't silently regress into a 200 with two rows
-   * for the same bytes, or a crash. This test exists to notice either.
+   * the insert are not one atomic step: two concurrent uploads of the same
+   * bytes by the same owner can both miss the check. The unique index then
+   * refuses the second row, and the loser answers with the winner's asset,
+   * exactly as a sequential duplicate does, and removes the bytes it stored.
    */
-  it("gives the loser of a concurrent duplicate upload a 500, not a silent double-write", async () => {
-    const [a, b] = await Promise.all([upload(pngBytes(40, 40)), upload(pngBytes(40, 40))]);
-    const statuses = [a.status, b.status].sort();
-    expect(statuses).toEqual([201, 500]);
+  it("answers the loser of a concurrent duplicate upload with the winner's asset", async () => {
+    const puts: string[] = [];
+    const deletes: string[] = [];
+    const watched: ObjectStore = {
+      put: async (key, bytes, type) => {
+        puts.push(key);
+        await store.put(key, bytes, type);
+      },
+      get: store.get,
+      delete: async (key) => {
+        deletes.push(key);
+        await store.delete(key);
+      },
+    };
+    const raced = buildApp({ repository: createRepository(testDb.db), store: watched });
+    const send = () =>
+      raced.request("/assets", {
+        method: "POST",
+        headers: { "content-type": "image/png", authorization: `Bearer ${token}` },
+        body: pngBytes(40, 40),
+      });
 
-    // Confirm the race did not leave two rows behind: the winner's checksum
-    // still resolves to exactly one asset.
-    const winner = a.status === 201 ? a : b;
-    const { id } = (await winner.json()) as { id: string };
-    expect(await createRepository(testDb.db).findAsset(id)).not.toBeNull();
+    const [a, b] = await Promise.all([send(), send()]);
+    expect([a.status, b.status].sort()).toEqual([200, 201]);
+
+    const ids = [
+      ((await a.json()) as { id: string }).id,
+      ((await b.json()) as { id: string }).id,
+    ];
+    expect(ids[0]).toBe(ids[1]);
+
+    const rows = await testDb.db.execute("select count(*)::int as count from assets");
+    expect(rows.rows[0]).toMatchObject({ count: 1 });
+
+    // Both requests stored bytes; the loser's object is gone, the winner's stays.
+    const winnerKey = `assets/${ids[0]}`;
+    expect(puts).toHaveLength(2);
+    expect(deletes).toEqual(puts.filter((key) => key !== winnerKey));
+    expect(await store.get(winnerKey)).not.toBeNull();
   });
 
   // Mutation-tested: swapping the order of store.put and createAsset (bytes
@@ -249,6 +262,7 @@ describe("POST /assets", () => {
         throw new Error("simulated store failure");
       },
       get: store.get,
+      delete: store.delete,
     };
     const failingApp = buildApp({ repository: createRepository(testDb.db), store: failingStore });
 

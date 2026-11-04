@@ -73,12 +73,37 @@ describe.each([
     expect(Array.from((await store.get("k"))!.bytes)).toEqual([1, 2, 3]);
   });
 
+  it("removes a key, and only that key", async () => {
+    const store = await make();
+    await store.put("a", new Uint8Array([1]), "image/png");
+    await store.put("b", new Uint8Array([2]), "image/png");
+    await store.delete("a");
+    expect(await store.get("a")).toBeNull();
+    expect(Array.from((await store.get("b"))!.bytes)).toEqual([2]);
+  });
+
+  it("treats deleting a key that is not there as done", async () => {
+    const store = await make();
+    await expect(store.delete("never-written")).resolves.toBeUndefined();
+  });
+
+  it("lets a deleted key be written again", async () => {
+    const store = await make();
+    await store.put("k", new Uint8Array([1]), "image/png");
+    await store.delete("k");
+    await store.put("k", new Uint8Array([7]), "image/webp");
+    const got = await store.get("k");
+    expect(Array.from(got!.bytes)).toEqual([7]);
+    expect(got!.contentType).toBe("image/webp");
+  });
+
   it("refuses a key that would escape the store", async () => {
     const store = await make();
     await expect(
       store.put("../escape", new Uint8Array([1]), "image/png"),
     ).rejects.toThrow(/key/i);
     await expect(store.get("../escape")).rejects.toThrow(/key/i);
+    await expect(store.delete("../escape")).rejects.toThrow(/key/i);
   });
 
   /**

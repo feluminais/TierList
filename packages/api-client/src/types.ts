@@ -67,4 +67,10 @@ export interface AssetResponse {
   width: number;
   height: number;
   byteSize: number;
+  /**
+   * True when the server already held these exact bytes for this owner and
+   * answered with that asset (200) rather than storing a new one (201). Read
+   * from the response status; the body does not carry it.
+   */
+  deduplicated: boolean;
 }

@@ -204,6 +204,7 @@ describe("assets", () => {
 
     expect(result).toEqual({
       id: "a1", contentType: "image/png", width: 10, height: 5, byteSize: 24,
+      deduplicated: false,
     });
     expect(calls[0]!.url).toBe("https://api.test/assets");
     expect(calls[0]!.init.method).toBe("POST");
@@ -212,6 +213,23 @@ describe("assets", () => {
     expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe(
       `Bearer ${"t".repeat(43)}`,
     );
+  });
+
+  it("reports an upload the server already held as deduplicated", async () => {
+    const client = createClient({
+      baseUrl: "https://api.test",
+      token: "t".repeat(43),
+      fetch: (async () =>
+        new Response(
+          JSON.stringify({ id: "a1", contentType: "image/png", width: 10, height: 5, byteSize: 24 }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )) as unknown as typeof globalThis.fetch,
+    });
+
+    expect(await client.uploadAsset(new Uint8Array([1]), "image/png")).toMatchObject({
+      id: "a1",
+      deduplicated: true,
+    });
   });
 
   it("omits authorization when no token is configured", async () => {

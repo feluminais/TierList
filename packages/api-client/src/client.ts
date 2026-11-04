@@ -189,7 +189,8 @@ export function createClient(options: ClientOptions): Client {
         // Uint8Array body; only the declarations disagree.
         body: bytes as any,
       });
-      return (await expectOk(res)) as AssetResponse;
+      const body = (await expectOk(res)) as Omit<AssetResponse, "deduplicated">;
+      return { ...body, deduplicated: res.status === 200 };
     },
 
     async shareList(listId, options) {

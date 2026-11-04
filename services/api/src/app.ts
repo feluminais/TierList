@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { internalError, requestLogging, type LogSink } from "./observe";
 import { createRoutes, type RouteDeps } from "./routes";
 
 export interface AppOptions {
@@ -10,10 +11,36 @@ export interface AppOptions {
    * entry point refuses to start without a list.
    */
   allowedOrigins?: readonly string[];
+  /**
+   * Where structured request and error lines go. Omitted, nothing is logged:
+   * tests and the scratch API stay quiet, and the production entry point
+   * passes a sink that writes one JSON line to stdout.
+   */
+  log?: LogSink;
+  /** Milliseconds, for request durations. Defaults to `Date.now`. */
+  clock?: () => number;
+  /** How long `/health` waits for the database before answering 503. */
+  healthTimeoutMs?: number;
+}
+
+const DEFAULT_HEALTH_TIMEOUT_MS = 2000;
+
+/** Rejects when `work` has not settled within `ms`; the timer never outlives it. */
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out")), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
 }
 
 export function buildApp(deps?: RouteDeps, options: AppOptions = {}) {
   const app = new Hono();
+
+  // First, so its line and its `x-request-id` cover every response, including
+  // the ones CORS or a route produces.
+  app.use("*", requestLogging({ log: options.log ?? (() => {}), clock: options.clock ?? Date.now }));
+  app.onError(internalError);
 
   /**
    * Applied to everything, before any route.
@@ -35,7 +62,18 @@ export function buildApp(deps?: RouteDeps, options: AppOptions = {}) {
    */
   app.use("*", options.allowedOrigins ? cors({ origin: [...options.allowedOrigins] }) : cors());
 
-  app.get("/health", (c) => c.json({ status: "ok" }));
+  // With a repository, healthy means the database answers: a process whose
+  // pool is dead still serves static answers, and a load balancer that only
+  // saw those would keep routing to it.
+  app.get("/health", async (c) => {
+    if (!deps) return c.json({ status: "ok" });
+    try {
+      await withTimeout(deps.repository.ping(), options.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS);
+      return c.json({ status: "ok" });
+    } catch {
+      return c.json({ status: "unavailable" }, 503);
+    }
+  });
 
   if (deps) app.route("/", createRoutes(deps));
 

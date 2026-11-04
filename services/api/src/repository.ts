@@ -1,5 +1,5 @@
 import { migrate, type TierList } from "@tl/core";
-import { and, desc, eq, ilike, inArray } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   assets,
@@ -29,6 +29,8 @@ import {
 type Db = PgDatabase<PgQueryResultHKT, Record<string, unknown>>;
 
 export interface Repository {
+  /** Resolves when the database answers a trivial query; rejects when it cannot. */
+  ping: () => Promise<void>;
   /**
    * Inserts a new document. Returns false, changing nothing, when the id is
    * already taken. Deliberately not an upsert: an overwriting create would be
@@ -177,6 +179,10 @@ export class RevisionConflictError extends Error {
 
 export function createRepository(db: Db): Repository {
   return {
+    async ping() {
+      await db.execute(sql`select 1`);
+    },
+
     async create(doc, ownerId, now = new Date()) {
       const inserted = await db
         .insert(tierLists)

@@ -12,6 +12,7 @@ import { act, createElement, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  classifySaveError,
   useAutosave,
   type AutosaveHandlers,
   type AutosaveTimings,
@@ -328,6 +329,38 @@ describe("useAutosave", () => {
     );
     await wait(RETRY * 1.5);
     expect(calls).toHaveLength(1);
+  });
+
+  it("stops for good when the server refuses the document", async () => {
+    const { client, calls } = fakeClient();
+    const { probe } = await mount({ client });
+
+    await act(async () => probe.edit(RENAME));
+    await wait(DEBOUNCE * 2);
+    await act(async () => calls[0]!.reject(new ApiError(400, "invalid document")));
+    await flush();
+
+    expect(probe.failures).toEqual(["rejected"]);
+    expect(probe.session.status).toBe("rejected");
+
+    await act(async () =>
+      probe.edit({ type: "item/addText", id: "i1", label: "Udon" }),
+    );
+    await wait(RETRY * 1.5);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("classifies a failed save by what it says about retrying", () => {
+    expect(classifySaveError(new ApiError(409, "x"))).toBe("conflict");
+    for (const status of [400, 401, 403, 404, 413, 415, 422]) {
+      expect(classifySaveError(new ApiError(status, "x"))).toBe("rejected");
+    }
+    // Worth repeating: the request may succeed unchanged.
+    for (const status of [408, 429, 500, 502, 503]) {
+      expect(classifySaveError(new ApiError(status, "x"))).toBe("offline");
+    }
+    expect(classifySaveError(new TypeError("Failed to fetch"))).toBe("offline");
+    expect(classifySaveError("not an error")).toBe("offline");
   });
 
   it("retries a transient failure, but not at the debounce interval", async () => {

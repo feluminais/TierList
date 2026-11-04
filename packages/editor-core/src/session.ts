@@ -16,9 +16,20 @@ import {
   type History,
 } from "./history";
 
-export type SaveStatus = "saved" | "dirty" | "saving" | "conflict" | "error";
+export type SaveStatus =
+  | "saved"
+  | "dirty"
+  | "saving"
+  | "conflict"
+  | "rejected"
+  | "error";
 
-export type SaveFailure = "conflict" | "offline";
+/**
+ * Why a write failed, in terms of what to do next. `offline` is worth repeating
+ * unchanged; `conflict` and `rejected` are not, and both stop the save loop.
+ * `rejected` means the server understood the request and refused the document.
+ */
+export type SaveFailure = "conflict" | "rejected" | "offline";
 
 export interface EditorSession {
   doc: TierList;
@@ -88,9 +99,19 @@ export function createSession(
  * with a stale expectation either fails forever or, worse, succeeds after the
  * user's next edit and silently discards theirs. Recovery needs a decision
  * this module cannot make alone.
+ *
+ * `rejected` returns null because the server refused this document, and
+ * resending a document the server has already refused is a request that fails
+ * the same way for as long as the tab is open.
  */
 export function pendingWrite(session: EditorSession): PendingWrite | null {
-  if (session.status === "saving" || session.status === "conflict") return null;
+  if (
+    session.status === "saving" ||
+    session.status === "conflict" ||
+    session.status === "rejected"
+  ) {
+    return null;
+  }
   if (session.syncedRevision === null) {
     return { kind: "create", doc: session.doc };
   }
@@ -259,7 +280,9 @@ export function applyActions(
  * outstanding, and `saveSucceeded` will notice the document has moved on. A
  * conflicted session stays conflicted — nothing here can clear a conflict, and
  * pretending an edit did would restart the save loop straight into clobbering
- * the other writer. Everything else goes dirty.
+ * the other writer. A refused session stays refused for the same reason: the
+ * server will keep refusing until the page is reloaded. Everything else goes
+ * dirty.
  *
  * Shared by `applyAction`, `undoSession` and `redoSession` because undo and
  * redo are edits like any other: they move content and bump the revision.
@@ -267,6 +290,7 @@ export function applyActions(
 function editedStatus(status: SaveStatus): SaveStatus {
   if (status === "saving") return "saving";
   if (status === "conflict") return "conflict";
+  if (status === "rejected") return "rejected";
   return "dirty";
 }
 
@@ -330,6 +354,6 @@ export function saveFailed(
     session.doc,
     session.history,
     session.syncedRevision,
-    failure === "conflict" ? "conflict" : "error",
+    failure === "conflict" ? "conflict" : failure === "rejected" ? "rejected" : "error",
   );
 }

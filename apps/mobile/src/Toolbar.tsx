@@ -101,10 +101,10 @@ interface Readout {
 }
 
 /**
- * The same four-plus-one states the web reports, in the same words.
+ * The same states the web reports, in the same words.
  *
- * `conflict` is the only one meaning the work is *not going to be* saved, so
- * it is the only one that shouts.
+ * `conflict` and `rejected` are the ones meaning the work is *not going to be*
+ * saved, so they are the ones that shout.
  */
 function saveReadout(session: EditorSession, connection: Connection): Readout {
   if (connection.state === "disconnected") {
@@ -126,6 +126,11 @@ function saveReadout(session: EditorSession, connection: Connection): Readout {
       return { text: "Save failed — retrying", color: "#fbbf24" };
     case "conflict":
       return { text: "Conflict — edited elsewhere. Nothing is being saved.", color: "#f87171" };
+    case "rejected":
+      return {
+        text: "The server refused this list. Nothing is being saved; your edits stay on this device.",
+        color: "#f87171",
+      };
   }
 }
 

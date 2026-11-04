@@ -196,7 +196,7 @@ export function Toolbar({
       <span
         data-testid="save-status"
         data-save-state={save.key}
-        role={save.key === "conflict" ? "alert" : undefined}
+        role={save.key === "conflict" || save.key === "rejected" ? "alert" : undefined}
         style={{ ...readout, ...save.style }}
       >
         {save.text}
@@ -214,9 +214,9 @@ interface Readout {
 /**
  * The one place the connection and the save state are folded together.
  *
- * `conflict` is the only state meaning the user's work is *not going to be*
- * saved: a conflicted session stops writing and nothing clears it. That earns
- * a treatment nothing else has. `disconnected` is the other failure worth
+ * `conflict` and `rejected` are the only states meaning the user's work is *not
+ * going to be* saved: such a session stops writing and nothing clears it. That
+ * earns a treatment nothing else has. `disconnected` is the other failure worth
  * saying out loud, and it is the normal state of this route when no API is
  * configured.
  */
@@ -251,6 +251,12 @@ function saveReadout(session: EditorSession, connection: Connection, loading: bo
       return {
         key: "conflict",
         text: "Conflict — edited elsewhere. Nothing is being saved.",
+        style: alarmed,
+      };
+    case "rejected":
+      return {
+        key: "rejected",
+        text: "The server refused this list. Nothing is being saved; your edits stay on this device.",
         style: alarmed,
       };
   }

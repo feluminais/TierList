@@ -1,7 +1,12 @@
 "use client";
 
 import { ApiError, type Client } from "@tl/api-client";
-import { pendingWrite, type EditorSession, type PendingWrite } from "@tl/editor-core";
+import {
+  pendingWrite,
+  type EditorSession,
+  type PendingWrite,
+  type SaveFailure,
+} from "@tl/editor-core";
 import { useCallback, useEffect, useRef } from "react";
 
 /** How long the document must sit still before a save is attempted. */
@@ -12,16 +17,32 @@ export const AUTOSAVE_DEBOUNCE_MS = 800;
  *
  * Without this the loop is `debounce -> request -> fail -> debounce -> ...`,
  * which against a dead network or a 500 is roughly one request per second for
- * as long as the tab is open. A conflict does not retry at all — `pendingWrite`
- * returns null for it — so this only ever governs failures that are worth
- * repeating.
+ * as long as the tab is open. A conflict or a refusal does not retry at all —
+ * `pendingWrite` returns null for both — so this only ever governs failures
+ * that are worth repeating.
  */
 export const AUTOSAVE_RETRY_MS = 5000;
 
 export interface AutosaveHandlers {
   onSaveStarted: () => void;
   onSaveSucceeded: (acknowledged: number) => void;
-  onSaveFailed: (failure: "conflict" | "offline") => void;
+  onSaveFailed: (failure: SaveFailure) => void;
+}
+
+/**
+ * What a failed save says about trying again.
+ *
+ * 409 is the API's "someone else wrote first". Any other 4xx except 408
+ * (request timeout) and 429 (too many requests) is the server refusing this
+ * document, which resending unchanged cannot fix. A dead network, a timeout, a
+ * throttle and every 5xx are transient and worth repeating.
+ */
+export function classifySaveError(error: unknown): SaveFailure {
+  if (!(error instanceof ApiError)) return "offline";
+  const { status } = error;
+  if (status === 409) return "conflict";
+  if (status >= 400 && status < 500 && status !== 408 && status !== 429) return "rejected";
+  return "offline";
 }
 
 /** Injected only so tests need not wait a real second per assertion. */
@@ -122,10 +143,7 @@ export function useAutosave(
       },
       (error: unknown) => {
         if (!mounted.current) return;
-        // 409 is the API's "someone else wrote first". Everything else — a
-        // dead network, a 500 — is transient and worth retrying.
-        const conflict = error instanceof ApiError && error.status === 409;
-        handlersRef.current.onSaveFailed(conflict ? "conflict" : "offline");
+        handlersRef.current.onSaveFailed(classifySaveError(error));
       },
     );
   }, []);

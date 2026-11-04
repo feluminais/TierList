@@ -440,6 +440,33 @@ describe("a conflict is sticky", () => {
   });
 });
 
+describe("a refused write is sticky", () => {
+  function refused(): EditorSession {
+    return saveFailed(saveStarted(applyAction(saved(), RENAME, T1)), "rejected");
+  }
+
+  it("reports its own status, distinct from a conflict and from a transient failure", () => {
+    expect(refused().status).toBe("rejected");
+  });
+
+  it("stops asking for a write, because the same document would be refused again", () => {
+    expect(pendingWrite(refused())).toBeNull();
+  });
+
+  it("survives an edit, an undo and a redo", () => {
+    const edited = applyAction(refused(), { type: "item/addText", id: "i9", label: "z" }, T1);
+    expect(edited.status).toBe("rejected");
+    const undone = undoSession(refused(), T1);
+    expect(undone.status).toBe("rejected");
+    expect(redoSession(undone, T1).status).toBe("rejected");
+    expect(pendingWrite(edited)).toBeNull();
+  });
+
+  it("still keeps the unsaved edits as a draft", () => {
+    expect(unsyncedDraft(refused())).toMatchObject({ baseRevision: base().revision });
+  });
+});
+
 describe("createSession", () => {
   /**
    * `pendingWrite` alone cannot see this: it answers null for a matching

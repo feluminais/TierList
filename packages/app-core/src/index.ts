@@ -14,7 +14,7 @@ export { useApiClient, TOKEN_STORAGE_KEY } from "./useApiClient";
 export type { ApiClientIo, Connection, TokenStore } from "./useApiClient";
 export { useAssetUpload } from "./useAssetUpload";
 export type { AssetUpload, UploadSource } from "./useAssetUpload";
-export { useAutosave } from "./useAutosave";
+export { classifySaveError, useAutosave } from "./useAutosave";
 export type { Autosave, AutosaveHandlers, AutosaveTimings } from "./useAutosave";
 export { useShare } from "./useShare";
 export type { ShareState } from "./useShare";

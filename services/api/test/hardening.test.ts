@@ -137,6 +137,27 @@ describe("text Postgres cannot store", () => {
     expect(stored.document.title).toBe(doc.title);
     expect(stored.document.revision).toBe(doc.revision);
   });
+
+  it("answers a list id holding a NUL as an unknown list", async () => {
+    expect((await app.request("/lists/a%00b")).status).toBe(404);
+  });
+
+  it("refuses to share a list id holding a NUL as an unknown list", async () => {
+    const token = await mint();
+    const res = await app.request("/lists/a%00b/share", {
+      method: "POST",
+      headers: auth(token),
+      body: "{}",
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it.each(["q", "category"])("finds nothing for a browse %s holding a NUL", async (param) => {
+    const res = await app.request(`/browse?${param}=a%00b`);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ results: [] });
+  });
 });
 
 /**

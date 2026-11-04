@@ -21,12 +21,12 @@ const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const CATEGORY_ID = /^[a-z0-9-]{1,32}$/;
 
 /**
- * Text Postgres refuses to hold: NUL, which neither `text` nor `jsonb` can
- * represent, and a surrogate with no partner, which `jsonb` rejects. Under the
- * `u` flag a surrogate pair reads as one code point, so this range matches only
- * a lone surrogate and leaves emoji alone.
+ * False for text Postgres refuses to hold: NUL, which neither `text` nor `jsonb`
+ * can represent, and a surrogate with no partner, which `jsonb` rejects. Under
+ * the `u` flag a surrogate pair reads as one code point, so the range matches
+ * only a lone surrogate and leaves emoji alone.
  */
-const UNSTORABLE_TEXT = /[\0\ud800-\udfff]/u;
+export const isStorableText = (text: string): boolean => !/[\0\ud800-\udfff]/u.test(text);
 
 /**
  * Raised for a document that is structurally unusable. `problems` names every
@@ -219,12 +219,12 @@ function checkStorableText(root: Record<string, unknown>, fail: (m: string) => v
   for (let next = pending.pop(); next; next = pending.pop()) {
     const { value, path } = next;
     if (typeof value === "string") {
-      if (UNSTORABLE_TEXT.test(value)) fail(`${path} holds text that cannot be stored`);
+      if (!isStorableText(value)) fail(`${path} holds text that cannot be stored`);
     } else if (Array.isArray(value)) {
       value.forEach((entry, at) => pending.push({ value: entry, path: `${path}[${at}]` }));
     } else if (isRecord(value)) {
       for (const [key, entry] of Object.entries(value)) {
-        if (UNSTORABLE_TEXT.test(key)) {
+        if (!isStorableText(key)) {
           fail(`${path || "document"} has a key that cannot be stored`);
         }
         pending.push({ value: entry, path: path ? `${path}.${key}` : key });

@@ -42,42 +42,33 @@ overrides:
   "@xmldom/xmldom@>=0.8.0 <0.8.15": ^0.8.15
   "@xmldom/xmldom@>=0.9.0 <0.9.12": ^0.9.12
 allowBuilds:
-  # All three resolve their native binary from prebuilt platform-specific
-  # optional deps (@esbuild/*, @img/sharp-*, @unrs/resolver-binding-*). No
-  # postinstall is needed to obtain that binary:
-  #   esbuild       the prebuilt @esbuild/<platform> binary is already present;
-  #                 the postinstall only creates the standalone `esbuild` CLI
-  #                 shim, which vite/vitest never invoke (they use the JS API).
-  #                 A future package shelling out to the esbuild CLI would need
-  #                 this flipped to true.
-  #   sharp         install/check.js only opts into a *source* build when a
-  #                 system libvips is present; denying it pins us to prebuilts.
-  #   unrs-resolver napi-postinstall repairs a missing binding by downloading
-  #                 a tarball at install time; denying it keeps installs hermetic.
-  # NOTE: this denial is workspace-wide and applies to future *direct*
-  # dependents (e.g. services/api). For cross-platform deploys use
-  # supportedArchitectures, not this flag.
+  # The first three resolve their native binary from prebuilt platform-specific
+  # optional deps (@esbuild/*, @img/sharp-*, @unrs/resolver-binding-*), so no
+  # postinstall is needed to obtain it. Each denial is workspace-wide and applies
+  # to future *direct* dependents (e.g. services/api). For cross-platform deploys
+  # use supportedArchitectures, not this flag.
   #
-  #   @shopify/react-native-skia
-  #                 UNLIKE the three entries above, this postinstall is
-  #                 REQUIRED. Do not pattern-match it to them: there the
-  #                 prebuilt binary was already in place and the script was
-  #                 redundant, so denying it cost nothing. Here the binary
-  #                 ships in a *sibling* package and the script is the only
-  #                 thing that puts it where the build looks.
-  #                 scripts/install-libs.js is a pure local fs.cpSync -- no
-  #                 network, no downloads, no child_process -- that copies
-  #                 prebuilt binaries out of react-native-skia-android and
-  #                 react-native-skia-apple-{ios,macos,tvos} into the
-  #                 package's own libs/, which is exactly the path
-  #                 android/build.gradle reads (skiaLibsPath =
-  #                 "${projectDir}/../libs/android"). Denying it breaks the
-  #                 Android native build.
-  #                 Note 2.10.1 had no postinstall at all; it was added in
-  #                 the 2.6.x line, which is why this entry is new.
+  # The prebuilt @esbuild/<platform> binary is already present; the postinstall
+  # only creates the standalone `esbuild` CLI shim, which vite/vitest never invoke
+  # (they use the JS API). A future package shelling out to the esbuild CLI would
+  # need this flipped to true.
   esbuild: false
+  # install/check.js only opts into a *source* build when a system libvips is
+  # present; denying it pins us to prebuilts.
   sharp: false
+  # napi-postinstall repairs a missing binding by downloading a tarball at install
+  # time; denying it keeps installs hermetic.
   unrs-resolver: false
+  # UNLIKE the three entries above, this postinstall is REQUIRED. Do not
+  # pattern-match it to them: there the prebuilt binary is already in place and
+  # the script is redundant, so denying it costs nothing. Here the binary ships in
+  # a *sibling* package and the script is the only thing that puts it where the
+  # build looks. scripts/install-libs.js is a pure local fs.cpSync -- no network,
+  # no downloads, no child_process -- that copies prebuilt binaries out of
+  # react-native-skia-android and react-native-skia-apple-{ios,macos,tvos} into
+  # the package's own libs/, which is exactly the path android/build.gradle reads
+  # (skiaLibsPath = "${projectDir}/../libs/android"). Denying it breaks the Android
+  # native build.
   '@shopify/react-native-skia': true
 patchedDependencies:
   '@shopify/react-native-skia@2.6.2': patches/@shopify__react-native-skia@2.6.2.patch

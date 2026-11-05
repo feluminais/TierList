@@ -44,6 +44,22 @@ describe("useSessionEdits", () => {
     expect(result.current.session).toBe(before);
   });
 
+  it("ignores undo and redo while loading even when there is history to move through", () => {
+    const { result, rerender } = mount(true);
+    act(() => result.current.edits.dispatch(RENAME));
+    act(() => result.current.edits.dispatch(ADD));
+    act(() => result.current.edits.undo());
+    // Now both an undo step and a redo step exist.
+    expect(result.current.session.canUndo).toBe(true);
+    expect(result.current.session.canRedo).toBe(true);
+
+    rerender({ loaded: false });
+    const frozen = result.current.session;
+    act(() => result.current.edits.undo());
+    act(() => result.current.edits.redo());
+    expect(result.current.session).toBe(frozen);
+  });
+
   it("starts accepting edits the moment loading ends", () => {
     const { result, rerender } = mount(false);
     act(() => result.current.edits.dispatch(RENAME));

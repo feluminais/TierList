@@ -107,6 +107,25 @@ describe("deleting a list", () => {
     expect(window.localStorage.getItem(draftKey("list-1"))).toBe("{}");
   });
 
+  it("does not let another list's delete be started while one is running", async () => {
+    let finish: (removed: boolean) => void = () => {};
+    client.deleteList.mockReturnValue(new Promise<boolean>((resolve) => (finish = resolve)));
+    await mount();
+
+    fireEvent.click(within(rowOf("Ramen"), "list-delete")!);
+    await act(async () => {
+      fireEvent.click(within(rowOf("Ramen"), "list-delete-confirm")!);
+    });
+
+    // While it runs, the other row cannot open a confirmation to be cancelled
+    // silently when this one finishes.
+    expect((within(rowOf("Games"), "list-delete") as HTMLButtonElement).disabled).toBe(true);
+
+    await act(async () => finish(true));
+    await waitFor(() => expect(screen.queryByText("Ramen")).toBeNull());
+    expect((within(rowOf("Games"), "list-delete") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("shows the empty state once the last list is gone", async () => {
     client.listMine.mockResolvedValue([LISTS[0]]);
     await mount();

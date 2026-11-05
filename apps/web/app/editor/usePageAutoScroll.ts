@@ -27,9 +27,14 @@ export interface PageAutoScroll {
  * computed from the deltas that were requested; the browser clamps a scroll at
  * the page's bounds and a request is only a request.
  *
- * The offset only matters while something is being dragged, so it is tracked
- * only while `active`. Doing it always would re-render the editor on every
- * scroll event for nothing.
+ * The offset only matters during a drag, so it is tracked only then: from the
+ * moment a pointer goes down on the board until it comes up, and while
+ * `active` (a drag reported by the board). Tracking always would re-render the
+ * editor, and redraw the canvas, on every scroll event for nothing. Starting at
+ * the press rather than at the drag matters: the gesture compares each offset
+ * with the last it saw to correct for the board moving under a still pointer,
+ * so the first offset it sees has to be the real one, before the drag begins,
+ * not a jump from a stale zero.
  */
 export function usePageAutoScroll(
   boardRef: RefObject<HTMLElement | null>,
@@ -39,6 +44,7 @@ export function usePageAutoScroll(
     typeof window === "undefined" ? 0 : window.innerHeight,
   );
   const [scrollY, setScrollY] = useState(0);
+  const [pressed, setPressed] = useState(false);
 
   useEffect(() => {
     const onResize = () => setViewportHeight(window.innerHeight);
@@ -47,8 +53,28 @@ export function usePageAutoScroll(
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  // On the document rather than on the board element: the owner may replace
+  // that element (a rebuilt renderer), and a listener bound to the old one
+  // would stop hearing presses.
   useEffect(() => {
-    if (!active) return;
+    const down = (event: Event) => {
+      const board = boardRef.current;
+      if (board && event.target instanceof Node && board.contains(event.target)) setPressed(true);
+    };
+    const up = () => setPressed(false);
+    document.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    return () => {
+      document.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+    };
+  }, [boardRef]);
+
+  const tracking = active || pressed;
+  useEffect(() => {
+    if (!tracking) return;
     const read = () => {
       const board = boardRef.current;
       // `|| 0` rather than `-top` outright: `-0` would read as a change.
@@ -57,7 +83,7 @@ export function usePageAutoScroll(
     read();
     window.addEventListener("scroll", read, { passive: true });
     return () => window.removeEventListener("scroll", read);
-  }, [active, boardRef]);
+  }, [tracking, boardRef]);
 
   const onAutoScroll = useCallback((delta: number) => {
     window.scrollBy(0, delta);

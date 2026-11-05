@@ -41,7 +41,8 @@ export default function ListsClient() {
       await connection.client.deleteList(id);
       await removeDraft(browserStore(), id);
       setLists((current) => (current ?? []).filter((list) => list.id !== id));
-      setConfirming(null);
+      // Only this list's confirmation: another may have been opened since.
+      setConfirming((current) => (current === id ? null : current));
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -137,6 +138,7 @@ export default function ListsClient() {
                   type="button"
                   data-testid="list-delete"
                   aria-label={`Delete ${list.title || "Untitled tier list"}`}
+                  disabled={deleting}
                   onClick={() => {
                     setConfirming(list.id);
                     setDeleteError(null);

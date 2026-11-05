@@ -48,6 +48,8 @@ interface Record<T> {
   /** Retries made so far; reset by a success. */
   attempts: number;
   retryTimer?: unknown;
+  /** A load for this record is in flight; a second is never started beside it. */
+  loading: boolean;
   /** False once evicted or disposed, so a late result is released instead of stored. */
   live: boolean;
 }
@@ -94,8 +96,10 @@ export function createImageStore<T>(options: ImageStoreOptions<T>): ImageStore<T
   }
 
   function start(assetId: string, record: Record<T>): void {
+    record.loading = true;
     load(assetId).then(
       (image) => {
+        record.loading = false;
         if (!record.live) {
           // Evicted or disposed while loading. After disposal nothing will draw
           // again, so it goes at once; after eviction it gets the grace period.
@@ -111,6 +115,7 @@ export function createImageStore<T>(options: ImageStoreOptions<T>): ImageStore<T
         }
       },
       () => {
+        record.loading = false;
         if (record.live) failed(assetId, record);
       },
     );
@@ -152,7 +157,8 @@ export function createImageStore<T>(options: ImageStoreOptions<T>): ImageStore<T
           if (
             !wasWanted.has(assetId) &&
             existing.entry.status === "failed" &&
-            existing.retryTimer === undefined
+            existing.retryTimer === undefined &&
+            !existing.loading
           ) {
             existing.attempts = 0;
             existing.entry = { status: "loading" };
@@ -162,7 +168,13 @@ export function createImageStore<T>(options: ImageStoreOptions<T>): ImageStore<T
           records.delete(assetId);
           records.set(assetId, existing);
         } else {
-          const record: Record<T> = { entry: { status: "loading" }, wanted: true, attempts: 0, live: true };
+          const record: Record<T> = {
+            entry: { status: "loading" },
+            wanted: true,
+            attempts: 0,
+            loading: false,
+            live: true,
+          };
           records.set(assetId, record);
           start(assetId, record);
         }

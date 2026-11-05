@@ -150,6 +150,26 @@ describe("failure and retry", () => {
   });
 });
 
+describe("a retry in flight", () => {
+  it("is not joined by a second load when its tile leaves the board and comes back", async () => {
+    const { store, loader, clock } = make({ retryDelaysMs: [1000] });
+    store.want(["a"]);
+    loader.requests[0]!.reject(new Error("x"));
+    await settle();
+    clock.advance(1000);
+    expect(loader.byId("a")).toHaveLength(2); // the retry is in flight
+
+    store.want([]);
+    store.want(["a"]);
+    expect(loader.byId("a")).toHaveLength(2);
+
+    // And its result is kept, not overwritten by a second request's failure.
+    loader.byId("a")[1]!.resolve("img-a");
+    await settle();
+    expect(store.get("a")).toEqual({ status: "ready", image: "img-a" });
+  });
+});
+
 describe("a failure left behind", () => {
   it("starts afresh when its tile comes back after being off the board", async () => {
     const { store, loader, clock } = make({ retryDelaysMs: [1000] });

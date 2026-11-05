@@ -505,6 +505,18 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
   // session: `recovery.epoch` is the key that remounts it. The document is
   // never touched by a loss.
   const recovery = useContextRecovery(shellRef);
+  // The edit sheet's canvas as a component whose identity changes with each
+  // recovery, so React rebuilds just the canvas and the sheet around it keeps
+  // the crop and strokes being worked on.
+  const RecoverableEditCanvas = useMemo<EditCanvasComponent | null>(() => {
+    if (!EditCanvasComp) return null;
+    const Inner = EditCanvasComp;
+    return function RecoverableEditCanvas(props) {
+      return <Inner {...props} />;
+    };
+    // The epoch is the point: a new function per recovery is a new component type.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [EditCanvasComp, recovery.epoch]);
   // The page is the scroller on this route, so a drag near the top or bottom
   // of the window scrolls it; the hook measures the window and where the board
   // sits in it.
@@ -710,9 +722,10 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
       </div>
       {editingItem && EditCanvasComp ? (
         <EditSheet
-          key={recovery.epoch}
           item={editingItem}
-          EditCanvas={EditCanvasComp}
+          // A fresh component each recovery, so only its canvas is rebuilt and
+          // the sheet keeps the crop and strokes being worked on.
+          EditCanvas={RecoverableEditCanvas ?? EditCanvasComp}
           // The number, not the name: `aspectRatioFor` is the one place the
           // mapping lives, and `layoutBoard` reads it from there too, so the
           // sheet and the board cannot drift into disagreeing about what

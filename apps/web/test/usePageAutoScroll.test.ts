@@ -89,6 +89,52 @@ describe("usePageAutoScroll", () => {
     expect(result.current.viewportHeight).toBe(500);
   });
 
+  it("starts reading the offset when a pointer goes down on the board, before any drag", () => {
+    const el = board();
+    document.body.appendChild(el);
+    const { result } = renderHook(() => usePageAutoScroll({ current: el }, false));
+    expect(result.current.scrollY).toBe(0);
+
+    top = -250;
+    act(() => {
+      el.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(result.current.scrollY).toBe(250);
+
+    scrollTo(-275);
+    expect(result.current.scrollY).toBe(275);
+  });
+
+  it("ignores a press outside the board", () => {
+    const el = board();
+    const outside = document.createElement("div");
+    document.body.append(el, outside);
+    const { result } = renderHook(() => usePageAutoScroll({ current: el }, false));
+
+    top = -250;
+    act(() => {
+      outside.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    expect(result.current.scrollY).toBe(0);
+  });
+
+  it("stops reading once the pointer is up", () => {
+    const el = board();
+    document.body.appendChild(el);
+    const { result } = renderHook(() => usePageAutoScroll({ current: el }, false));
+    act(() => {
+      el.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    });
+    scrollTo(-100);
+    expect(result.current.scrollY).toBe(100);
+
+    act(() => {
+      window.dispatchEvent(new Event("pointerup"));
+    });
+    scrollTo(-900);
+    expect(result.current.scrollY).toBe(100);
+  });
+
   it("keeps onAutoScroll stable, because the gesture hook reads it through a ref", () => {
     const { result, rerender } = mount(false);
     const first = result.current.onAutoScroll;

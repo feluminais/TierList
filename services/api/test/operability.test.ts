@@ -1,3 +1,4 @@
+import { DrizzleQueryError } from "drizzle-orm/errors";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "../src/app";
 import { createRepository, type Repository } from "../src/repository";
@@ -143,6 +144,64 @@ describe("request logging", () => {
     expect(request).toMatchObject({ status: 500, requestId: res.headers.get("x-request-id") });
   });
 
+  it("does not log a failed query's parameters, which hold share codes, ids and documents", async () => {
+    const failing: Repository = {
+      ...repository,
+      load: () =>
+        Promise.reject(
+          new DrizzleQueryError(
+            "select * from tier_lists where id = $1",
+            ["SECRET-LIST-ID"],
+            new Error("connection reset"),
+          ),
+        ),
+    };
+    const app = buildApp({ repository: failing, store: createMemoryStore() }, options());
+    await app.request("/lists/abc");
+
+    const failure = entries.find((e) => e.event === "error");
+    expect(failure?.message).toBe("connection reset");
+    expect(JSON.stringify(entries)).not.toContain("SECRET-LIST-ID");
+    expect(JSON.stringify(entries)).not.toContain("tier_lists");
+  });
+
+  it("says only that a query failed when the driver's own error is missing", async () => {
+    const failing: Repository = {
+      ...repository,
+      load: () =>
+        Promise.reject(new DrizzleQueryError("select 1 where x = $1", ["SECRET-CODE"], undefined as never)),
+    };
+    const app = buildApp({ repository: failing, store: createMemoryStore() }, options());
+    await app.request("/lists/abc");
+    expect(entries.find((e) => e.event === "error")?.message).toBe("database query failed");
+    expect(JSON.stringify(entries)).not.toContain("SECRET-CODE");
+  });
+
+  it("answers 500 and logs when a handler throws something that is not an Error", async () => {
+    const failing: Repository = {
+      ...repository,
+      load: () => Promise.reject("a bare string"),
+    };
+    const app = buildApp({ repository: failing, store: createMemoryStore() }, options());
+    const res = await app.request("/lists/abc");
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual({ error: "internal error" });
+    expect(res.headers.get("x-request-id")).toBeTruthy();
+    expect(entries.find((e) => e.event === "error")).toMatchObject({ message: "a bare string" });
+    expect(entries.find((e) => e.event === "request")).toMatchObject({ status: 500 });
+  });
+
+  it("logs why /health answered 503, though the client is told only that it is unavailable", async () => {
+    const broken: Repository = { ...repository, ping: () => Promise.reject(new Error("pool exhausted")) };
+    const app = buildApp({ repository: broken, store: createMemoryStore() }, options());
+    const res = await app.request("/health");
+
+    expect(res.status).toBe(503);
+    await expect(res.json()).resolves.toEqual({ status: "unavailable" });
+    expect(entries.find((e) => e.event === "error")).toMatchObject({ message: "pool exhausted" });
+  });
+
   it("logs nothing when no sink is given", async () => {
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});
     const app = buildApp({ repository, store: createMemoryStore() });
@@ -189,7 +248,8 @@ describe("createShutdown", () => {
     const done = shutdown("SIGTERM");
     await vi.advanceTimersByTimeAsync(100);
     // Still draining: the database must stay open for requests in flight.
-    expect(calls).toEqual(["close", "closeIdle"]);
+    expect(calls[0]).toBe("close");
+    expect(calls).not.toContain("closeAll");
     expect(order).toEqual(["log shutdown"]);
 
     finish();
@@ -218,6 +278,69 @@ describe("createShutdown", () => {
     finish();
     await done;
     expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("drains a connection that is busy at the signal once its request finishes", async () => {
+    vi.useFakeTimers();
+    const { server, calls, finish } = fakeServer();
+    const shutdown = createShutdown({
+      server,
+      closeDb: async () => {},
+      log: () => {},
+      exit: () => {},
+      timeoutMs: 10_000,
+    });
+
+    const done = shutdown("SIGTERM");
+    const idleCallsAtSignal = calls.filter((c) => c === "closeIdle").length;
+    // The busy request finishes later; its keep-alive connection is idle then,
+    // and only another sweep can close it.
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls.filter((c) => c === "closeIdle").length).toBeGreaterThan(idleCallsAtSignal);
+    expect(calls).not.toContain("closeAll");
+
+    finish();
+    await done;
+  });
+
+  it("stops sweeping once the server has closed", async () => {
+    vi.useFakeTimers();
+    const { server, calls, finish } = fakeServer();
+    const shutdown = createShutdown({
+      server,
+      closeDb: async () => {},
+      log: () => {},
+      exit: () => {},
+      timeoutMs: 10_000,
+    });
+    const done = shutdown("SIGTERM");
+    finish();
+    await done;
+    const sweeps = calls.filter((c) => c === "closeIdle").length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(calls.filter((c) => c === "closeIdle").length).toBe(sweeps);
+  });
+
+  it("gives the database a deadline too, so a stuck query cannot hold the process open", async () => {
+    vi.useFakeTimers();
+    const { server, finish } = fakeServer();
+    const entries: Entry[] = [];
+    const exit = vi.fn();
+    const shutdown = createShutdown({
+      server,
+      closeDb: () => new Promise<void>(() => {}),
+      log: (entry) => entries.push(entry),
+      exit,
+      timeoutMs: 5_000,
+    });
+
+    const done = shutdown("SIGTERM");
+    finish();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await done;
+
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(entries.find((e) => e.level === "error")).toMatchObject({ event: "shutdown-error" });
   });
 
   it("does nothing for a second signal while the first is running", async () => {

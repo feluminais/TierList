@@ -19,6 +19,14 @@ export interface ShutdownOptions {
 export const SHUTDOWN_GRACE_MS = 10_000;
 
 /**
+ * How often idle connections are closed while the server drains. A connection
+ * that was busy when the signal came becomes an idle keep-alive one when its
+ * response is sent, and `close` waits for it until the client gives up, so it
+ * has to be swept again rather than once.
+ */
+const SWEEP_MS = 100;
+
+/**
  * Builds the handler for SIGTERM and SIGINT.
  *
  * It stops accepting connections, lets requests already in flight finish, and
@@ -48,6 +56,7 @@ export function createShutdown(options: ShutdownOptions): (signal: string) => Pr
       server.close(() => resolve());
     });
     server.closeIdleConnections?.();
+    const sweep = setInterval(() => server.closeIdleConnections?.(), SWEEP_MS);
 
     const timer = setTimeout(() => {
       forced = true;
@@ -55,10 +64,22 @@ export function createShutdown(options: ShutdownOptions): (signal: string) => Pr
     }, timeoutMs);
 
     await closed;
+    clearInterval(sweep);
     clearTimeout(timer);
 
+    // The pool waits for every checked-out client, so a query that never
+    // returns would hold the process open forever. It gets the same deadline.
+    let dbTimer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await closeDb();
+      await Promise.race([
+        closeDb(),
+        new Promise<never>((_, reject) => {
+          dbTimer = setTimeout(
+            () => reject(new Error("closing the database timed out")),
+            timeoutMs,
+          );
+        }),
+      ]);
     } catch (error) {
       log({
         ts: new Date().toISOString(),
@@ -68,6 +89,8 @@ export function createShutdown(options: ShutdownOptions): (signal: string) => Pr
       });
       exit(1);
       return;
+    } finally {
+      clearTimeout(dbTimer);
     }
     exit(forced ? 1 : 0);
   }

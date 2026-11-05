@@ -89,14 +89,67 @@ export function clientAddress(c: Context, trustedProxyHops: number): string {
     if (forwarded) {
       const hops = forwarded.split(",").map((entry) => entry.trim());
       const entry = hops[hops.length - trustedProxyHops];
-      if (entry) return entry;
+      if (entry) return addressKey(entry);
     }
   }
   try {
-    return getConnInfo(c).remote.address ?? "unknown";
+    return addressKey(getConnInfo(c).remote.address ?? "unknown");
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * The part of an address that identifies who is behind it.
+ *
+ * An IPv4 address is its own key, and one mapped into IPv6 (`::ffff:1.2.3.4`,
+ * how a dual-stack socket reports it) is the IPv4 address. An IPv6 address is
+ * keyed by its /64, because that is what one subscriber is handed: a single
+ * host can use billions of addresses inside it, and counting each separately
+ * would give it a fresh allowance for every request. Text that is not an
+ * address is kept as it is.
+ */
+export function addressKey(address: string): string {
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(address);
+  if (mapped) return mapped[1]!;
+  if (!address.includes(":")) return address;
+
+  const groups = expandIPv6(address);
+  if (!groups) return address;
+  return `${groups.slice(0, 4).map((group) => group.toString(16)).join(":")}::/64`;
+}
+
+/** The eight 16-bit groups of an IPv6 address, or null when it is not one. */
+function expandIPv6(address: string): number[] | null {
+  const halves = address.split("%")[0]!.split("::");
+  if (halves.length > 2) return null;
+
+  const parse = (part: string): number[] | null => {
+    if (part === "") return [];
+    const out: number[] = [];
+    for (const piece of part.split(":")) {
+      if (piece.includes(".")) {
+        const v4 = piece.split(".").map(Number);
+        if (v4.length !== 4 || v4.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+        out.push(v4[0]! * 256 + v4[1]!, v4[2]! * 256 + v4[3]!);
+      } else if (/^[0-9a-fA-F]{1,4}$/.test(piece)) {
+        out.push(parseInt(piece, 16));
+      } else {
+        return null;
+      }
+    }
+    return out;
+  };
+
+  const head = parse(halves[0]!);
+  const tail = halves.length === 2 ? parse(halves[1]!) : [];
+  if (!head || !tail) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null;
+
+  // `::` stands for at least one group of zeros.
+  const fill = 8 - head.length - tail.length;
+  if (fill < 1) return null;
+  return [...head, ...new Array<number>(fill).fill(0), ...tail];
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { ErrorHandler, MiddlewareHandler } from "hono";
+import { DrizzleQueryError } from "drizzle-orm/errors";
 import { HTTPException } from "hono/http-exception";
 import { routePath } from "hono/route";
 import { randomUUID } from "node:crypto";
@@ -6,6 +7,20 @@ import { randomUUID } from "node:crypto";
 /** One structured log record. Sinks serialise it however they like. */
 export type LogEntry = Record<string, unknown>;
 export type LogSink = (entry: LogEntry) => void;
+
+/**
+ * What may be logged about an error.
+ *
+ * Drizzle wraps a failed query in an error whose message is the SQL and its
+ * bound parameters, which here are share codes, list ids, token hashes and
+ * whole documents: exactly what this module promises never to log. The
+ * driver's own error, which it carries as `cause`, says what went wrong
+ * without them.
+ */
+function loggable(error: Error): Error {
+  if (!(error instanceof DrizzleQueryError)) return error;
+  return error.cause instanceof Error ? error.cause : new Error("database query failed");
+}
 
 export interface Observation {
   log: LogSink;
@@ -32,11 +47,20 @@ export function requestLogging({ log, clock }: Observation): MiddlewareHandler {
     const started = clock();
     c.header("x-request-id", requestId);
 
-    await next();
+    try {
+      await next();
+    } catch (thrown) {
+      // Hono hands an `Error` to the error handler itself; anything else a
+      // handler throws (a rejected string, say) would otherwise escape it with
+      // no body, no request id and no log line.
+      c.error = thrown instanceof Error ? thrown : new Error(String(thrown));
+      c.res = await internalError(c.error, c);
+    }
 
     const route = routePath(c);
     const ts = new Date().toISOString();
     if (c.error) {
+      const error = loggable(c.error);
       log({
         ts,
         level: "error",
@@ -44,8 +68,8 @@ export function requestLogging({ log, clock }: Observation): MiddlewareHandler {
         requestId,
         method: c.req.method,
         route,
-        message: c.error.message,
-        stack: c.error.stack,
+        message: error.message,
+        stack: error.stack,
       });
     }
     log({

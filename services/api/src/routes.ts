@@ -10,9 +10,19 @@ import { generateShareCode, isPlausibleShareCode } from "./sharecode";
 import type { ObjectStore } from "./store";
 import { generateToken, hashToken } from "./tokens";
 
+/**
+ * How long an image stays after the last time it was used, when the list that
+ * used it is deleted. A document the server has not seen yet (an autosave still
+ * waiting, edits made offline) may already refer to an image the owner has just
+ * uploaded or re-uploaded, and the server has no way to know.
+ */
+export const DEFAULT_ASSET_GRACE_MS = 15 * 60 * 1000;
+
 export interface RouteDeps {
   repository: Repository;
   store: ObjectStore;
+  /** Overrides `DEFAULT_ASSET_GRACE_MS`; 0 lets a deletion remove any unreferenced image at once. */
+  assetGraceMs?: number;
   /**
    * The server's clock: every timestamp this service records comes from here.
    * Injected so a test can order writes deterministically.
@@ -120,6 +130,7 @@ function parseDocument(value: unknown): ParseResult {
 export function createRoutes(deps: RouteDeps) {
   const routes = new Hono<AuthVars>();
   const now = deps.now ?? (() => new Date());
+  const assetGraceMs = deps.assetGraceMs ?? DEFAULT_ASSET_GRACE_MS;
 
   /**
    * The server mints a token's identity itself. The document model forbids
@@ -248,7 +259,9 @@ export function createRoutes(deps: RouteDeps) {
     const id = c.req.param("id");
     if (!id || !isStorableText(id)) return c.json({ error: "not found" }, 404);
 
-    const result = await deps.repository.deleteList(id, c.get("ownerId"));
+    const result = await deps.repository.deleteList(id, c.get("ownerId"), {
+      retainAssetsUsedSince: new Date(now().getTime() - assetGraceMs),
+    });
     if (!result) return c.json({ error: "not found" }, 404);
 
     await Promise.all(
@@ -272,7 +285,12 @@ export function createRoutes(deps: RouteDeps) {
     // Adding the same picture to a list twice is ordinary. Returning the asset
     // the owner already has costs one lookup and saves a second copy.
     const existing = await deps.repository.findAssetByChecksum(ownerId, checksum);
-    if (existing) return c.json(assetBody(existing), 200);
+    if (existing) {
+      // In use again: a list's deletion must not take it out from under a
+      // document that is about to refer to it.
+      await deps.repository.touchAsset(existing.id, now());
+      return c.json(assetBody(existing), 200);
+    }
 
     const id = randomUUID();
     const storageKey = `assets/${id}`;
@@ -291,6 +309,7 @@ export function createRoutes(deps: RouteDeps) {
       height: info.height,
       checksum,
       createdAt: now(),
+      lastUsedAt: now(),
     });
 
     if (!created) {
@@ -300,6 +319,7 @@ export function createRoutes(deps: RouteDeps) {
       await deps.store.delete(storageKey).catch(() => undefined);
       const winner = await deps.repository.findAssetByChecksum(ownerId, checksum);
       if (!winner) return c.json({ error: "upload raced, retry" }, 409);
+      await deps.repository.touchAsset(winner.id, now());
       return c.json(assetBody(winner), 200);
     }
 

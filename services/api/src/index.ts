@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import path from "node:path";
 import { buildApp } from "./app";
+import { parseTrustedProxyHops } from "./config";
 import { createDb } from "./db";
 import { createRepository } from "./repository";
 import type { LogEntry } from "./observe";
@@ -28,15 +29,28 @@ if (allowedOrigins.length === 0) {
   process.exit(1);
 }
 
+// How many reverse proxies sit in front of this process. Unset means none; see
+// `parseTrustedProxyHops`. Behind a proxy it has to be set, or every client
+// shares the proxy's rate-limit buckets.
+let trustedProxyHops: number;
+try {
+  trustedProxyHops = parseTrustedProxyHops(process.env.TRUSTED_PROXY_HOPS);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+
 const port = Number(process.env.PORT ?? 8787);
-const { db, close: closeDb } = createDb(url);
+const { db, close: closeDb } = createDb(url, (error) =>
+  log({ ts: new Date().toISOString(), level: "error", event: "pool-error", message: error.message }),
+);
 // A local directory. Swapping in an S3-compatible ObjectStore touches nothing
 // above this line, because routes are typed against the interface rather than
 // against an adapter.
 const storageRoot = process.env.ASSET_STORAGE_ROOT ?? path.resolve(process.cwd(), "data/assets");
 const app = buildApp(
   { repository: createRepository(db), store: createFileStore(storageRoot) },
-  { allowedOrigins, log },
+  { allowedOrigins, log, trustedProxyHops },
 );
 
 const server = serve({ fetch: app.fetch, port }, (info) => {

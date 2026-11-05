@@ -1,5 +1,5 @@
 import { migrate, type TierList } from "@tl/core";
-import { and, asc, desc, eq, ilike, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, lte, sql } from "drizzle-orm";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import {
   assets,
@@ -57,11 +57,13 @@ export interface Repository {
    * An image stays while any other document or any share's preview refers to
    * it, whoever owns that document: a fill is a copy of a template and keeps
    * pointing at the template author's images. Only the list owner's own
-   * images are ever removed.
+   * images are ever removed, and not one used since `retainAssetsUsedSince`:
+   * a document the server has not seen yet may be about to refer to it.
    */
   deleteList: (
     id: string,
     ownerId: string,
+    options: { retainAssetsUsedSince: Date },
   ) => Promise<{ removedAssets: { id: string; storageKey: string }[] } | null>;
   /**
    * Withdraws the owner's share of a list, with its reports. Returns false when
@@ -94,6 +96,8 @@ export interface Repository {
    * same checksum — the loser of a race between two identical uploads.
    */
   createAsset: (row: NewAssetRow) => Promise<boolean>;
+  /** Marks an asset as in use now, so a list's deletion leaves it alone for a while. */
+  touchAsset: (id: string, now: Date) => Promise<void>;
   findAsset: (id: string) => Promise<AssetRow | null>;
   /**
    * An owner's existing asset with these exact bytes, if any. Scoped to the
@@ -265,7 +269,7 @@ export function createRepository(db: Db): Repository {
       }
     },
 
-    async deleteList(id, ownerId) {
+    async deleteList(id, ownerId, { retainAssetsUsedSince }) {
       return db.transaction(async (tx) => {
         const found = await tx
           .select({ document: tierLists.document })
@@ -288,8 +292,18 @@ export function createRepository(db: Db): Repository {
         await tx.delete(shares).where(eq(shares.listId, id));
         await tx.delete(tierLists).where(eq(tierLists.id, id));
 
+        // Only the owner's own images are ever candidates, found in one query
+        // so that ids an upload never made (a document may name anything) cost
+        // nothing further.
+        const owned = candidates.size
+          ? await tx
+              .select({ id: assets.id })
+              .from(assets)
+              .where(and(eq(assets.ownerId, ownerId), inArray(assets.id, [...candidates])))
+          : [];
+
         const removedAssets: { id: string; storageKey: string }[] = [];
-        for (const assetId of candidates) {
+        for (const { id: assetId } of owned) {
           const usedByDocument = await tx
             .select({ id: tierLists.id })
             .from(tierLists)
@@ -308,7 +322,13 @@ export function createRepository(db: Db): Repository {
 
           const removed = await tx
             .delete(assets)
-            .where(and(eq(assets.id, assetId), eq(assets.ownerId, ownerId)))
+            .where(
+              and(
+                eq(assets.id, assetId),
+                eq(assets.ownerId, ownerId),
+                lte(assets.lastUsedAt, retainAssetsUsedSince),
+              ),
+            )
             .returning({ id: assets.id, storageKey: assets.storageKey });
           removedAssets.push(...removed);
         }
@@ -393,6 +413,10 @@ export function createRepository(db: Db): Repository {
         .onConflictDoNothing({ target: [assets.ownerId, assets.checksum] })
         .returning({ id: assets.id });
       return inserted.length > 0;
+    },
+
+    async touchAsset(id, now) {
+      await db.update(assets).set({ lastUsedAt: now }).where(eq(assets.id, id));
     },
 
     async findAsset(id) {

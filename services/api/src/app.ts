@@ -82,7 +82,10 @@ export function buildApp(deps?: RouteDeps, options: AppOptions = {}) {
     try {
       await withTimeout(deps.repository.ping(), options.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS);
       return c.json({ status: "ok" });
-    } catch {
+    } catch (error) {
+      // The client is told only that it is unavailable; the reason goes to the
+      // log, where the request logger finds it on `c.error`.
+      c.error = error instanceof Error ? error : new Error(String(error));
       return c.json({ status: "unavailable" }, 503);
     }
   });

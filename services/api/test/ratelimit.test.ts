@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app";
-import { createLimiter, MAX_TRACKED_KEYS } from "../src/ratelimit";
+import { addressKey, createLimiter, MAX_TRACKED_KEYS } from "../src/ratelimit";
 import { createRepository } from "../src/repository";
 import { createMemoryStore } from "../src/store";
 import { pngBytes } from "./helpers/images";
@@ -47,6 +47,32 @@ describe("createLimiter", () => {
     expect(limiter.check(`k${MAX_TRACKED_KEYS + 499}`).allowed).toBe(false);
     // The oldest were forgiven rather than growing the table.
     expect(limiter.check("k0").allowed).toBe(true);
+  });
+});
+
+describe("addressKey", () => {
+  it("leaves an IPv4 address alone, and reads one mapped into IPv6 as the IPv4 address", () => {
+    expect(addressKey("203.0.113.9")).toBe("203.0.113.9");
+    expect(addressKey("::ffff:203.0.113.9")).toBe("203.0.113.9");
+  });
+
+  it("keys an IPv6 address by its /64, which is what one subscriber holds", () => {
+    const a = addressKey("2001:db8:1:2:aaaa:bbbb:cccc:dddd");
+    const b = addressKey("2001:db8:1:2:1:2:3:4");
+    expect(a).toBe(b);
+    expect(a).toBe("2001:db8:1:2::/64");
+    expect(addressKey("2001:db8:1:3::1")).not.toBe(a);
+  });
+
+  it("expands a compressed address before taking the prefix", () => {
+    expect(addressKey("2001:db8::1")).toBe("2001:db8:0:0::/64");
+    expect(addressKey("::1")).toBe("0:0:0:0::/64");
+    expect(addressKey("2001:DB8:0:0:0:0:0:1")).toBe("2001:db8:0:0::/64");
+  });
+
+  it("passes through what it cannot read as an address", () => {
+    expect(addressKey("unknown")).toBe("unknown");
+    expect(addressKey("not an address")).toBe("not an address");
   });
 });
 

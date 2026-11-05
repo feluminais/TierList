@@ -84,6 +84,13 @@ export const assets = pgTable(
     height: integer("height").notNull(),
     checksum: text("checksum").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    /**
+     * When this asset last came into use: when it was uploaded, or when an
+     * upload of the same bytes was answered with it. A list's deletion leaves
+     * an image alone while it is recent, because a document that is about to
+     * be saved may already refer to it and the server cannot see that yet.
+     */
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("assets_owner_idx").on(t.ownerId),

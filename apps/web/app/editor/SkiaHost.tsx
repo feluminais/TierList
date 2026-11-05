@@ -526,7 +526,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
    * others.
    */
   const layout = useMemo(
-    () => layoutBoard(session.doc, { width: boardWidth, trayAddSlot: true }),
+    () => layoutBoard(session.doc, { width: boardWidth, trayAddSlot: true, responsive: true }),
     [session.doc, boardWidth],
   );
 

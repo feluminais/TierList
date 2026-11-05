@@ -111,7 +111,7 @@ export function InteractiveBoard({
   assetIds = EMPTY_ASSET_IDS,
   assetUrl = emptyAssetUrl,
 }: InteractiveBoardProps) {
-  const ownLayout = useMemo(() => layoutBoard(doc, { width }), [doc, width]);
+  const ownLayout = useMemo(() => layoutBoard(doc, { width, responsive: true }), [doc, width]);
   const layout = providedLayout ?? ownLayout;
 
   const { drag, handlers } = useBoardGesture({

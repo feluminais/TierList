@@ -18,6 +18,11 @@ const ASPECT_RATIO: Record<TileAspect, number> = {
 /** The narrowest the tiles area is allowed to get before the label gives way. */
 const MIN_TILES_WIDTH = 40;
 
+/** Tiles a responsive layout tries to fit on one line of a tier. */
+const RESPONSIVE_COLUMNS = 3;
+/** The share of a narrow board the label column may take when responsive. */
+const RESPONSIVE_LABEL_SHARE = 0.2;
+
 /**
  * What a tile may be scaled to, in px.
  *
@@ -74,6 +79,21 @@ export interface LayoutOptions {
    * report it, and nothing can be dropped into it.
    */
   trayAddSlot?: boolean;
+  /**
+   * Fit the board to a narrow width instead of laying the document's sizes out
+   * as stored.
+   *
+   * The label column yields a share of a narrow board and tiles shrink, in
+   * proportion and never below `MIN_TILE_SIZE`, until three fit on a line — so
+   * a phone shows a usable board rather than two tiles to a tier. It only ever
+   * reduces: once the document's own sizes fit, the layout is exactly the one
+   * without this option, so widening the board never makes a tile smaller.
+   *
+   * This is how the board is drawn, not what the document says. Nothing is
+   * written back, and every consumer of a layout must be given the same options
+   * or they will disagree about where a tile is.
+   */
+  responsive?: boolean;
 }
 
 export interface TileBox {
@@ -151,19 +171,42 @@ interface LaidTiles {
   height: number;
 }
 
+/**
+ * A tile no wider than the room a line has, with its aspect kept.
+ *
+ * A line holds at least one tile however narrow the area, so an area narrower
+ * than one tile plus its gaps would push that tile past the area's edge, where
+ * hit testing finds it and drop targeting does not. Shrinking it to fit keeps
+ * every tile inside the location it belongs to.
+ */
+function fitTile(tile: Size, areaWidth: number, gap: number): Size {
+  const room = Math.max(0, areaWidth - gap * 2);
+  if (room >= tile.width) return tile;
+  return {
+    width: room,
+    height: Math.round(tile.height * (room / tile.width)),
+  };
+}
+
 function layoutTiles(
   itemIds: string[],
   area: Pick<Rect, "x" | "y" | "width">,
-  tile: Size,
+  wanted: Size,
   gap: number,
   /** Slots occupied before the first tile — currently only the tray's add
    *  control, which takes a tile's place and pushes every item along. */
   leading = 0,
 ): LaidTiles {
+  const tile = fitTile(wanted, area.width, gap);
   const columns = columnsIn(area.width, tile.width, gap);
 
   const slotRect = (position: number): Rect => ({
-    x: area.x + gap + (position % columns) * (tile.width + gap),
+    // Never past the area's right edge: with no room for a tile this leaves a
+    // zero-width one at the edge rather than one beyond it.
+    x: Math.min(
+      area.x + gap + (position % columns) * (tile.width + gap),
+      area.x + area.width - tile.width,
+    ),
     y: area.y + gap + Math.floor(position / columns) * (tile.height + gap),
     width: tile.width,
     height: tile.height,
@@ -216,12 +259,33 @@ export function layoutBoard(doc: TierList, options: LayoutOptions): BoardLayout 
   const padding = options.padding ?? 0;
   const boardWidth = Math.max(0, options.width - padding * 2);
 
+  // A responsive board lets the label take only a share of a narrow width.
+  const wantedLabel = options.responsive
+    ? Math.min(
+        doc.display.labelWidth,
+        Math.max(MIN_LABEL_WIDTH, Math.round(boardWidth * RESPONSIVE_LABEL_SHARE)),
+      )
+    : doc.display.labelWidth;
+
   // The label yields before the tiles area becomes unusable, so a narrow
   // phone loses label width rather than losing the ability to drop.
-  const labelWidth = Math.max(
-    0,
-    Math.min(doc.display.labelWidth, boardWidth - MIN_TILES_WIDTH),
-  );
+  const labelWidth = Math.max(0, Math.min(wantedLabel, boardWidth - MIN_TILES_WIDTH));
+
+  // How much a responsive board shrinks every tile: enough that
+  // `RESPONSIVE_COLUMNS` fit across a tier, never below `MIN_TILE_SIZE`, never
+  // larger than the document asks. One factor for all of them, so tiers keep
+  // their sizes relative to each other.
+  const scale = options.responsive
+    ? Math.min(
+        1,
+        Math.max(
+          MIN_TILE_SIZE,
+          Math.floor((boardWidth - labelWidth - gap) / RESPONSIVE_COLUMNS) - gap,
+        ) / doc.display.tileSize,
+      )
+    : 1;
+  const scaled = (size: number) =>
+    scale === 1 ? size : Math.max(Math.min(size, MIN_TILE_SIZE), Math.round(size * scale));
 
   const byLocation = groupByLocation(doc);
   const orderedRows = [...doc.rows].sort((a, b) => a.order - b.order);
@@ -231,7 +295,7 @@ export function layoutBoard(doc: TierList, options: LayoutOptions): BoardLayout 
 
   for (const row of orderedRows) {
     const tile = tileSizeFor(
-      row.tileSizeOverride ?? doc.display.tileSize,
+      scaled(row.tileSizeOverride ?? doc.display.tileSize),
       doc.display.tileAspect,
     );
     const tilesArea = {
@@ -254,7 +318,7 @@ export function layoutBoard(doc: TierList, options: LayoutOptions): BoardLayout 
 
   // The tray always uses the document tile size: it is not a tier, so a
   // per-row override has nothing to say about it.
-  const trayTile = tileSizeFor(doc.display.tileSize, doc.display.tileAspect);
+  const trayTile = tileSizeFor(scaled(doc.display.tileSize), doc.display.tileAspect);
   const trayArea = { x: padding, y, width: boardWidth };
   const trayLaid = layoutTiles(
     byLocation.get(null) ?? [],

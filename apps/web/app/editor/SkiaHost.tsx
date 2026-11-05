@@ -37,6 +37,7 @@ import { NewItemSheet } from "./NewItemSheet";
 import { ContextBanner } from "./ContextBanner";
 import { ShareDialog } from "./ShareDialog";
 import { useContextRecovery } from "./useContextRecovery";
+import { usePageAutoScroll } from "./usePageAutoScroll";
 import { useSessionEdits } from "./useSessionEdits";
 import { TierOverlay } from "./TierOverlay";
 import { TileEditOverlay } from "./TileEditButton";
@@ -90,6 +91,9 @@ type BoardProps = {
   liveAnnotation?: { points: number[]; color: string; width: number } | null;
   assetIds?: readonly string[];
   assetUrl?: (assetId: string) => string;
+  viewportHeight?: number;
+  scrollY?: number;
+  onAutoScroll?: (delta: number) => void;
 };
 
 /**
@@ -501,6 +505,11 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
   // session: `recovery.epoch` is the key that remounts it. The document is
   // never touched by a loss.
   const recovery = useContextRecovery(shellRef);
+  // The page is the scroller on this route, so a drag near the top or bottom
+  // of the window scrolls it; the hook measures the window and where the board
+  // sits in it.
+  const boardRegionRef = useRef<HTMLDivElement | null>(null);
+  const pageScroll = usePageAutoScroll(boardRegionRef, dragging);
   const [boardWidth, setBoardWidth] = useState(DEFAULT_BOARD_WIDTH);
   useEffect(() => {
     const shell = shellRef.current;
@@ -581,6 +590,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
           ignored (see `useSessionEdits`), so it is not offered for them. */}
       <div
         key={recovery.epoch}
+        ref={boardRegionRef}
         style={loaded ? undefined : { pointerEvents: "none", opacity: 0.6 }}
         aria-busy={!loaded}
       >
@@ -670,6 +680,9 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
                   onExporterReady={onExporterReady}
                   assetIds={assetIds}
                   assetUrl={assetUrl}
+                  viewportHeight={pageScroll.viewportHeight}
+                  scrollY={pageScroll.scrollY}
+                  onAutoScroll={pageScroll.onAutoScroll}
                 />
               </div>
             </TileEditOverlay>
@@ -681,9 +694,13 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
                 layout={layout}
                 onAction={dispatch}
                 onTap={onTap}
+                onDraggingChange={setDragging}
                 onExporterReady={onExporterReady}
                 assetIds={assetIds}
                 assetUrl={assetUrl}
+                viewportHeight={pageScroll.viewportHeight}
+                scrollY={pageScroll.scrollY}
+                onAutoScroll={pageScroll.onAutoScroll}
               />
             </div>
           )}

@@ -4,6 +4,7 @@ export * from "./imagefit";
 export * from "./strokes";
 export * from "./imageedit";
 export * from "./layout";
+export * from "./exportplan";
 export * from "./hit";
 export * from "./drag";
 export * from "./rowdrag";

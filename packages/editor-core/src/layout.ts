@@ -8,6 +8,11 @@ const GAP: Record<Density, number> = {
   roomy: 12,
 };
 
+/** The gap a density lays tiles out with, for anything that has to size a board to fit tiles. */
+export function gapFor(density: Density): number {
+  return GAP[density];
+}
+
 /** height ÷ width. Portrait is taller than wide; landscape is wider than tall. */
 const ASPECT_RATIO: Record<TileAspect, number> = {
   square: 1,
@@ -94,6 +99,14 @@ export interface LayoutOptions {
    * or they will disagree about where a tile is.
    */
   responsive?: boolean;
+  /**
+   * Whether the tray is laid out at all. When false the tray has no height and
+   * no tiles, and the board ends where the last tier does: for an export of a
+   * finished list, which usually should not show the items still waiting.
+   * Like every layout option it is a render parameter, never written to the
+   * document. Defaults to true.
+   */
+  includeTray?: boolean;
 }
 
 export interface TileBox {
@@ -340,13 +353,16 @@ export function layoutBoard(doc: TierList, options: LayoutOptions): BoardLayout 
   // per-row override has nothing to say about it.
   const trayTile = tileSizeFor(scaled(doc.display.tileSize), doc.display.tileAspect);
   const trayArea = { x: padding, y, width: boardWidth };
-  const trayLaid = layoutTiles(
-    byLocation.get(null) ?? [],
-    trayArea,
-    trayTile,
-    gap,
-    options.trayAddSlot ? 1 : 0,
-  );
+  const trayLaid =
+    options.includeTray === false
+      ? { tiles: [], tile: trayTile, height: 0, leadingRect: undefined }
+      : layoutTiles(
+          byLocation.get(null) ?? [],
+          trayArea,
+          trayTile,
+          gap,
+          options.trayAddSlot ? 1 : 0,
+        );
 
   const tray: TrayBox = {
     rect: { x: padding, y, width: boardWidth, height: trayLaid.height },

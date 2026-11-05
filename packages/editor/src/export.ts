@@ -1,3 +1,4 @@
+import type { ExportPlan, ExportSettings } from "@tl/editor-core";
 import { ImageFormat, type CanvasRef } from "@shopify/react-native-skia";
 
 export type ExportFormat = "png" | "jpg";
@@ -70,5 +71,13 @@ export function encodeBoardImage(
  * it receives the `Board` and `EditCanvas` components.
  */
 export interface BoardExporter {
+  /** The live canvas as it is, at the editing geometry. */
   toImage: (format: ExportFormat) => ExportedImage | null;
+  /**
+   * The document drawn off screen at the geometry of `settings`, whatever the
+   * editing viewport is. Null when it could not be produced.
+   */
+  render: (settings: ExportSettings, format: ExportFormat) => Promise<ExportedImage | null>;
+  /** What `render` would produce for these settings, without drawing it. */
+  plan: (settings: ExportSettings) => ExportPlan;
 }

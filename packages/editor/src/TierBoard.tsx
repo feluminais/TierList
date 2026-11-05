@@ -23,9 +23,11 @@ import {
   Text,
   rect,
   type CanvasRef,
+  type SkFont,
   type SkImage,
+  type SkTypeface,
 } from "@shopify/react-native-skia";
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import { StrokeLayer } from "./StrokeLayer";
 import {
   BOARD_BACKGROUND,
@@ -39,7 +41,7 @@ import {
   rowFontSize,
   truncate,
 } from "./theme";
-import { useBoardFont } from "./useBoardFont";
+import { useBoardFont, useBoardTypeface } from "./useBoardFont";
 import type { ImageCache, ImageEntry } from "./useImageCache";
 
 /**
@@ -77,6 +79,11 @@ export interface TierBoardProps {
    * that forwards one method would only be somewhere for the two to drift.
    */
   canvasRef?: React.Ref<CanvasRef>;
+  /**
+   * Filled with the board's typefaces once they have loaded, for an export that
+   * draws at another size and so has to make its own fonts.
+   */
+  typefacesRef?: React.MutableRefObject<{ regular: SkTypeface | null; bold: SkTypeface | null }>;
 }
 
 /**
@@ -99,6 +106,30 @@ function linePath(points: number[]) {
   return path;
 }
 
+/** The fonts a board is drawn with, and the sizes they were made at. */
+export interface BoardFonts {
+  row: SkFont | null;
+  rowBold: SkFont | null;
+  tile: SkFont | null;
+  rowSize: number;
+  tileSize: number;
+}
+
+/**
+ * The one size each font is made at, for a layout.
+ *
+ * One size per font object, fixed: a size is baked into an `SkFont` at load
+ * time, and hooks cannot run per row. Shared with the export, which makes its
+ * own fonts for its own layout.
+ */
+export function boardFontSizes(board: BoardLayout): { rowSize: number; tileSize: number } {
+  const firstRow = board.rows[0];
+  return {
+    rowSize: firstRow ? rowFontSize(firstRow.labelRect.width, firstRow.rect.height) : 24,
+    tileSize: tileFontSize(board.tray.tile.width),
+  };
+}
+
 export function TierBoard({
   doc,
   width,
@@ -107,11 +138,66 @@ export function TierBoard({
   images,
   liveAnnotation,
   canvasRef,
+  typefacesRef,
 }: TierBoardProps) {
   const board = useMemo(
     () => layout ?? layoutBoard(doc, { width }),
     [layout, doc, width],
   );
+
+  const { rowSize, tileSize } = boardFontSizes(board);
+
+  // Both weights, always. Hooks cannot run per row, so the board loads each
+  // once and picks per tier at draw time — the same constraint that makes one
+  // font size serve every row.
+  const rowFont = useBoardFont(rowSize);
+  const rowFontBold = useBoardFont(rowSize, true);
+  const tileFont = useBoardFont(tileSize);
+
+  // Handed to whoever exports, who needs the faces to make fonts at the sizes
+  // of a different layout. Written in an effect: a render may be discarded.
+  const regularFace = useBoardTypeface();
+  const boldFace = useBoardTypeface(true);
+  useEffect(() => {
+    if (!typefacesRef) return;
+    typefacesRef.current = { regular: regularFace, bold: boldFace };
+  }, [typefacesRef, regularFace, boldFace]);
+
+  return (
+    <Canvas ref={canvasRef} style={{ width, height: board.contentHeight }}>
+      <BoardScene
+        doc={doc}
+        width={width}
+        board={board}
+        drag={drag}
+        images={images}
+        liveAnnotation={liveAnnotation}
+        fonts={{ row: rowFont, rowBold: rowFontBold, tile: tileFont, rowSize, tileSize }}
+      />
+    </Canvas>
+  );
+}
+
+export interface BoardSceneProps {
+  doc: TierList;
+  /** The width `board` was laid out at. */
+  width: number;
+  board: BoardLayout;
+  drag?: DragState;
+  images?: ImageCache;
+  liveAnnotation?: { points: number[]; color: string; width: number } | null;
+  fonts: BoardFonts;
+}
+
+/**
+ * Everything a board draws, as Skia nodes with no canvas around them.
+ *
+ * Split from `TierBoard` so the same drawing can be placed in an offscreen
+ * render at another size: the board and an export are one set of drawing code,
+ * and an export cannot show something the board does not.
+ */
+export function BoardScene({ doc, width, board, drag, images, liveAnnotation, fonts }: BoardSceneProps) {
+  const { row: rowFont, rowBold: rowFontBold, tile: tileFont, rowSize, tileSize } = fonts;
 
   const itemsById = useMemo(
     () => new Map(doc.items.map((i) => [i.id, i])),
@@ -122,21 +208,6 @@ export function TierBoard({
     () => new Map(doc.rows.map((r) => [r.id, r])),
     [doc.rows],
   );
-
-  // One size per font object, fixed: a size is baked into an SkFont at load
-  // time, and hooks cannot run per row.
-  const firstRow = board.rows[0];
-  const rowSize = firstRow
-    ? rowFontSize(firstRow.labelRect.width, firstRow.rect.height)
-    : 24;
-  const tileSize = tileFontSize(board.tray.tile.width);
-
-  // Both weights, always. Hooks cannot run per row, so the board loads each
-  // once and picks per tier at draw time — the same constraint that makes one
-  // font size serve every row.
-  const rowFont = useBoardFont(rowSize);
-  const rowFontBold = useBoardFont(rowSize, true);
-  const tileFont = useBoardFont(tileSize);
 
   // Skia positions text on its baseline, not its top edge. `ascent` is
   // negative and `descent` positive, so the glyph box is centred on the row
@@ -278,7 +349,7 @@ export function TierBoard({
   };
 
   return (
-    <Canvas ref={canvasRef} style={{ width, height: board.contentHeight }}>
+    <>
       <Fill color={BOARD_BACKGROUND} />
 
       {board.rows.map((row) => {
@@ -385,6 +456,6 @@ export function TierBoard({
           />
         </Group>
       ) : null}
-    </Canvas>
+    </>
   );
 }

@@ -1,5 +1,5 @@
-import { useFont } from "@shopify/react-native-skia";
-import type { SkFont } from "@shopify/react-native-skia";
+import { useFont, useTypeface } from "@shopify/react-native-skia";
+import type { SkFont, SkTypeface } from "@shopify/react-native-skia";
 import { Inter_400Regular } from "@expo-google-fonts/inter/400Regular";
 import { Inter_700Bold } from "@expo-google-fonts/inter/700Bold";
 
@@ -21,4 +21,9 @@ import { Inter_700Bold } from "@expo-google-fonts/inter/700Bold";
  */
 export function useBoardFont(size: number, bold = false): SkFont | null {
   return useFont(bold ? Inter_700Bold : Inter_400Regular, size);
+}
+
+/** The face on its own, for making fonts at other sizes; see the web variant. */
+export function useBoardTypeface(bold = false): SkTypeface | null {
+  return useTypeface(bold ? Inter_700Bold : Inter_400Regular);
 }

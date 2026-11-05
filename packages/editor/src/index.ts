@@ -5,3 +5,4 @@ export * from "./useBoardGesture";
 export * from "./useImageCache";
 export * from "./EditCanvas";
 export * from "./export";
+export * from "./renderExport";

@@ -40,6 +40,8 @@ export interface ToolbarProps {
    * holds a placeholder, whose save state describes nothing real.
    */
   loading?: boolean;
+  /** Opens the export dialog, where the picture's shape is chosen. Null while there is no canvas. */
+  onExportOptions?: (() => void) | null;
 }
 
 /**
@@ -63,6 +65,7 @@ export function Toolbar({
   onCategory,
   onTags,
   loading = false,
+  onExportOptions = null,
 }: ToolbarProps) {
   const save = saveReadout(session, connection, loading);
   // Until the list has loaded this is a placeholder for a document that has not
@@ -71,6 +74,7 @@ export function Toolbar({
   const undoOff = loading || !session.canUndo;
   const redoOff = loading || !session.canRedo;
   const exportOff = loading || !onExportImage;
+  const exportOptionsOff = loading || !onExportOptions;
   const shareOff = loading || !onShare;
 
   return (
@@ -133,6 +137,16 @@ export function Toolbar({
         title="Download the board as a JPG"
       >
         JPG
+      </button>
+      <button
+        type="button"
+        data-testid="export-options"
+        onClick={() => onExportOptions?.()}
+        disabled={exportOptionsOff}
+        style={button(exportOptionsOff)}
+        title="Choose the picture's width, tiles per line, sharpness and whether the tray is in it"
+      >
+        Export…
       </button>
       <button
         type="button"

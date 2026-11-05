@@ -1,9 +1,10 @@
 import type { TierList, TierListAction } from "@tl/core";
-import { layoutBoard, type BoardLayout } from "@tl/editor-core";
-import type { CanvasRef } from "@shopify/react-native-skia";
+import { exportPlan, layoutBoard, type BoardLayout } from "@tl/editor-core";
+import type { CanvasRef, SkTypeface } from "@shopify/react-native-skia";
 import React, { useEffect, useMemo, useRef } from "react";
 import { View } from "react-native";
 import { encodeBoardImage, type BoardExporter } from "./export";
+import { renderBoardImage } from "./renderExport";
 import { TierBoard } from "./TierBoard";
 import { useBoardGesture } from "./useBoardGesture";
 import { useImageCache } from "./useImageCache";
@@ -138,9 +139,31 @@ export function InteractiveBoard({
   // told exactly twice — once on mount and once on unmount — instead of on
   // every render that replaced the canvas.
   const canvasRef = useRef<CanvasRef | null>(null);
+  // What an offscreen export needs and the exporter must read at call time:
+  // the document as it is now, the images decoded so far, and the faces the
+  // board loaded.
+  const typefacesRef = useRef<{ regular: SkTypeface | null; bold: SkTypeface | null }>({
+    regular: null,
+    bold: null,
+  });
+  const latest = useRef({ doc, images });
+  useEffect(() => {
+    latest.current = { doc, images };
+  });
   useEffect(() => {
     if (!onExporterReady) return;
-    onExporterReady({ toImage: (format) => encodeBoardImage(canvasRef.current, format) });
+    onExporterReady({
+      toImage: (format) => encodeBoardImage(canvasRef.current, format),
+      plan: (settings) => exportPlan(latest.current.doc, settings),
+      render: (settings, format) =>
+        renderBoardImage({
+          doc: latest.current.doc,
+          plan: exportPlan(latest.current.doc, settings),
+          images: latest.current.images,
+          typefaces: typefacesRef.current,
+          format,
+        }),
+    });
     return () => onExporterReady(null);
   }, [onExporterReady]);
 
@@ -154,6 +177,7 @@ export function InteractiveBoard({
         images={images}
         liveAnnotation={liveAnnotation}
         canvasRef={canvasRef}
+        typefacesRef={typefacesRef}
       />
     </View>
   );

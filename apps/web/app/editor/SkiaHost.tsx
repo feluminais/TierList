@@ -17,6 +17,8 @@ import {
   defaultCropFor,
   layoutBoard,
   type BoardLayout,
+  type ExportPlan,
+  type ExportSettings,
   resumeSession,
   saveFailed,
   saveStarted,
@@ -35,6 +37,7 @@ import { downloadBytes, filenameFor } from "./download";
 import { EditSheet, type EditCanvasComponent } from "./EditSheet";
 import { NewItemSheet } from "./NewItemSheet";
 import { ContextBanner } from "./ContextBanner";
+import { ExportDialog } from "./ExportDialog";
 import { ShareDialog } from "./ShareDialog";
 import { useContextRecovery } from "./useContextRecovery";
 import { usePageAutoScroll } from "./usePageAutoScroll";
@@ -77,6 +80,11 @@ function browserDraftStore(): DraftStore | null {
  */
 type BoardExporterLike = {
   toImage: (format: "png" | "jpg") => { bytes: Uint8Array; contentType: string } | null;
+  render: (
+    settings: ExportSettings,
+    format: "png" | "jpg",
+  ) => Promise<{ bytes: Uint8Array; contentType: string } | null>;
+  plan: (settings: ExportSettings) => ExportPlan;
 };
 
 type BoardProps = {
@@ -399,6 +407,36 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
     [],
   );
 
+  // The export dialog: the picture's own shape, drawn off screen. The quick
+  // PNG and JPG buttons still snapshot the live canvas as it is.
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const planExport = useCallback(
+    (settings: ExportSettings) => exporter!.plan(settings),
+    [exporter],
+  );
+  const onExportWith = useCallback(
+    async (settings: ExportSettings, format: "png" | "jpg") => {
+      if (!exporter) return;
+      setExporting(true);
+      setExportError(null);
+      try {
+        const image = await exporter.render(settings, format);
+        if (!image) {
+          setExportError("Could not draw the picture. Try a smaller size.");
+          return;
+        }
+        downloadBytes(image.bytes, image.contentType, filenameFor(session.doc.title, format));
+      } catch (e) {
+        setExportError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setExporting(false);
+      }
+    },
+    [exporter, session.doc.title],
+  );
+
   const onExportImage = useCallback(
     (format: "png" | "jpg") => {
       const image = exporter?.toImage(format);
@@ -562,6 +600,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
         onRedo={redo}
         uploadError={upload.error}
         onExportImage={exporter ? onExportImage : null}
+        onExportOptions={exporter ? () => setExportOpen(true) : null}
         onExportJson={onExportJson}
         onShare={client ? openShare : null}
         onAnnotate={() => setAnnotating(true)}
@@ -581,6 +620,16 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
           uploading={upload.uploading}
           error={upload.error}
           onClose={() => setAddingItem(false)}
+        />
+      ) : null}
+
+      {exportOpen && exporter ? (
+        <ExportDialog
+          plan={planExport}
+          onExport={onExportWith}
+          busy={exporting}
+          error={exportError}
+          onClose={() => setExportOpen(false)}
         />
       ) : null}
 

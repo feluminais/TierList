@@ -23,6 +23,16 @@ export interface ShareResponse {
   listed: boolean;
 }
 
+/** Why a share may be reported. Matches the API's closed set. */
+export type ReportReason = "illegal" | "abuse" | "copyright" | "spam" | "other";
+
+export interface ReportInput {
+  code: string;
+  reason: ReportReason;
+  /** Up to 500 characters. */
+  note?: string;
+}
+
 /** One card on a browse page. Never carries a document — see `GET /browse`. */
 export interface BrowseResult {
   code: string;

@@ -81,6 +81,9 @@ function fakeClient(): { client: Client; calls: Pending[] } {
       hold("update", doc, expectedRevision, options?.keepalive),
     uploadAsset: () => Promise.reject(new Error("not used here")),
     shareList: () => Promise.reject(new Error("not used here")),
+    deleteList: () => Promise.reject(new Error("not used here")),
+    unshareList: () => Promise.reject(new Error("not used here")),
+    reportShare: () => Promise.reject(new Error("not used here")),
     browse: () => Promise.resolve([]),
     getShare: () => Promise.resolve(null),
     assetUrl: () => {

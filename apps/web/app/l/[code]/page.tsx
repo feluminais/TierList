@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { jsonLdScript, shareJsonLd, siteOrigin } from "../../seo";
 import { FillButton } from "./FillButton";
+import { ReportButton } from "./ReportButton";
 import { StaticBoard } from "./StaticBoard";
 
 /**
@@ -148,6 +149,12 @@ export default async function SharedListPage({ params }: PageProps) {
         assetUrl={(id) => (client ? client.assetUrl(id) : "")}
         sources={new Map(share.assets.map((a) => [a.id, { width: a.width, height: a.height }]))}
       />
+
+      {apiBaseUrl ? (
+        <div style={{ marginTop: 24 }}>
+          <ReportButton code={code} baseUrl={apiBaseUrl} />
+        </div>
+      ) : null}
     </main>
   );
 }

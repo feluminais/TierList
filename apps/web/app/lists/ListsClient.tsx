@@ -4,7 +4,7 @@ import type { ListSummary } from "@tl/api-client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type CSSProperties } from "react";
-import { newListId, useApiClient } from "@tl/app-core";
+import { newListId, removeDraft, useApiClient, type DraftStore } from "@tl/app-core";
 
 /**
  * A flat view of everything this device owns: lists, templates published from
@@ -20,6 +20,34 @@ export default function ListsClient() {
   const connection = useApiClient(process.env.NEXT_PUBLIC_API_URL);
   const [lists, setLists] = useState<ListSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The list whose delete is being confirmed or run, and why one failed.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  /**
+   * Deletes a list on the server and forgets this device's draft of it.
+   *
+   * The draft matters: the editor recreates a list from a draft the server
+   * has not acknowledged, so a draft left behind would bring a deleted list
+   * back the next time its URL was opened. A list the server no longer has
+   * (`false`) is treated as deleted, which is what the person wanted.
+   */
+  const remove = async (id: string) => {
+    if (connection.state !== "connected" || deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await connection.client.deleteList(id);
+      await removeDraft(browserStore(), id);
+      setLists((current) => (current ?? []).filter((list) => list.id !== id));
+      setConfirming(null);
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   useEffect(() => {
     if (connection.state !== "connected") return;
@@ -68,19 +96,76 @@ export default function ListsClient() {
       ) : (
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
           {lists.map((list) => (
-            <li key={list.id}>
-              <Link href={`/editor/${encodeURIComponent(list.id)}`} style={card} data-testid="list-card">
+            <li key={list.id} style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+              <Link
+                href={`/editor/${encodeURIComponent(list.id)}`}
+                style={{ ...card, flex: 1 }}
+                data-testid="list-card"
+              >
                 <span style={{ fontSize: 15 }}>{list.title || "Untitled tier list"}</span>
                 <time style={{ ...muted, fontSize: 12 }} dateTime={list.updatedAt}>
                   {new Date(list.updatedAt).toLocaleString()}
                 </time>
               </Link>
+              {confirming === list.id ? (
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 12, color: "#8b98a6" }}>Delete for good?</span>
+                  <button
+                    type="button"
+                    data-testid="list-delete-confirm"
+                    disabled={deleting}
+                    onClick={() => void remove(list.id)}
+                    style={{ ...button, background: "#5b1d22", borderColor: "#7a2830" }}
+                  >
+                    {deleting ? "Deleting…" : "Delete"}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="list-delete-cancel"
+                    disabled={deleting}
+                    onClick={() => {
+                      setConfirming(null);
+                      setDeleteError(null);
+                    }}
+                    style={button}
+                  >
+                    Keep
+                  </button>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="list-delete"
+                  aria-label={`Delete ${list.title || "Untitled tier list"}`}
+                  onClick={() => {
+                    setConfirming(list.id);
+                    setDeleteError(null);
+                  }}
+                  style={button}
+                >
+                  Delete
+                </button>
+              )}
             </li>
           ))}
         </ul>
       )}
+      {deleteError ? (
+        <p style={warned} role="alert">
+          {deleteError}
+        </p>
+      ) : null}
     </div>
   );
+}
+
+/** `localStorage` when this browser allows it; a draft is simply not kept when it does not. */
+function browserStore(): DraftStore | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
 }
 
 const page: CSSProperties = {

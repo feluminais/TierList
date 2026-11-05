@@ -582,6 +582,8 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
           viewUrl={sharing.url}
           onShareTemplate={(listed) => void sharing.shareTemplate(listed)}
           templateUrl={sharing.templateUrl}
+          onStopView={() => void sharing.unshare()}
+          onStopTemplate={() => void sharing.unshareTemplate()}
           busy={sharing.sharing}
           error={sharing.error}
           onClose={() => setShareOpen(false)}

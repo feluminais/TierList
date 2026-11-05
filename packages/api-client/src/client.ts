@@ -5,6 +5,7 @@ import type {
   BrowseParams,
   BrowseResult,
   ListSummary,
+  ReportInput,
   ShareResponse,
   SharedList,
   TokenResponse,
@@ -81,6 +82,19 @@ export interface Client {
     listId: string,
     options?: { ogAssetId?: string; listed?: boolean },
   ) => Promise<ShareResponse>;
+  /**
+   * Deletes a list the caller owns, with its share and the images nothing else
+   * uses. Resolves false when there was nothing to delete, which is also what
+   * a list that belongs to someone else looks like.
+   */
+  deleteList: (id: string) => Promise<boolean>;
+  /**
+   * Withdraws a list's public link and listing, leaving the list. Sharing it
+   * again gives a new code. Resolves false when it had no share.
+   */
+  unshareList: (listId: string) => Promise<boolean>;
+  /** Reports a shared list to whoever runs the service. No token. */
+  reportShare: (report: ReportInput) => Promise<void>;
   /** Publicly listed shares. No token: browsing is public by definition. */
   browse: (params?: BrowseParams) => Promise<BrowseResult[]>;
   /** Reads a shared list by code. Public — no token involved. */
@@ -129,6 +143,14 @@ export function createClient(options: ClientOptions): Client {
     if (res.ok) return res.json();
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new ApiError(res.status, body.error ?? `request failed with ${res.status}`);
+  }
+
+  /** A delete's outcome: removed, already gone, or an error. */
+  async function expectRemoved(res: Response): Promise<boolean> {
+    if (res.status === 204) return true;
+    if (res.status === 404) return false;
+    await expectOk(res);
+    return true;
   }
 
   return {
@@ -207,6 +229,22 @@ export function createClient(options: ClientOptions): Client {
         auth: true,
       });
       return (await expectOk(res)) as ShareResponse;
+    },
+
+    async deleteList(id) {
+      return expectRemoved(await call(`/lists/${segment(id)}`, { method: "DELETE", auth: true }));
+    },
+
+    async unshareList(listId) {
+      return expectRemoved(
+        await call(`/lists/${segment(listId)}/share`, { method: "DELETE", auth: true }),
+      );
+    },
+
+    async reportShare(report) {
+      const body: Record<string, unknown> = { code: report.code, reason: report.reason };
+      if (report.note !== undefined) body.note = report.note;
+      await expectOk(await call("/reports", { method: "POST", body, auth: false }));
     },
 
     async browse(params) {

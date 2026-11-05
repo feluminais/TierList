@@ -16,6 +16,13 @@ export interface ShareState {
    * asked to be indexed — so it is passed rather than assumed.
    */
   shareTemplate: (listed: boolean) => Promise<void>;
+  /**
+   * Withdraws the read-only link, which stops working for everyone who has it.
+   * The list is untouched; sharing it again gives a new code.
+   */
+  unshare: () => Promise<void>;
+  /** Withdraws the template link the same way. The published template stays. */
+  unshareTemplate: () => Promise<void>;
   sharing: boolean;
   /** The read-only link, once one exists. */
   url: string | null;
@@ -147,5 +154,40 @@ export function useShare(
     }
   }, [client, shareUrlFor]);
 
-  return { share, shareTemplate, sharing, url, templateUrl, error };
+  /**
+   * Runs a withdrawal and, only when the server confirms it, forgets the link:
+   * a link still on screen after a failed withdrawal would say it was gone
+   * when it was not.
+   */
+  const withdraw = useCallback(
+    async (idOf: () => string | null, forget: () => void) => {
+      const id = idOf();
+      if (!client || !id) {
+        setError("not connected to an API");
+        return;
+      }
+      setError(null);
+      setSharing(true);
+      try {
+        await client.unshareList(id);
+        if (mounted.current) forget();
+      } catch (e) {
+        if (mounted.current) setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (mounted.current) setSharing(false);
+      }
+    },
+    [client],
+  );
+
+  const unshare = useCallback(
+    () => withdraw(() => listId, () => setUrl(null)),
+    [withdraw, listId],
+  );
+  const unshareTemplate = useCallback(
+    () => withdraw(() => templateIdRef.current, () => setTemplateUrl(null)),
+    [withdraw],
+  );
+
+  return { share, shareTemplate, unshare, unshareTemplate, sharing, url, templateUrl, error };
 }

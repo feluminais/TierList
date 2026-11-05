@@ -9,6 +9,10 @@ export interface ShareDialogProps {
   /** Publishes a template others can fill, and returns its link. */
   onShareTemplate: (listed: boolean) => void;
   templateUrl: string | null;
+  /** Withdraws the view link. Sharing again gives a new one. */
+  onStopView: () => void;
+  /** Withdraws the template link; the template itself stays. */
+  onStopTemplate: () => void;
   busy: boolean;
   error: string | null;
   onClose: () => void;
@@ -33,6 +37,8 @@ export function ShareDialog({
   viewUrl,
   onShareTemplate,
   templateUrl,
+  onStopView,
+  onStopTemplate,
   busy,
   error,
   onClose,
@@ -87,6 +93,7 @@ export function ShareDialog({
           url={viewUrl}
           busy={busy}
           onCreate={onShareView}
+          onStop={onStopView}
         />
 
         {viewUrl ? (
@@ -128,6 +135,7 @@ export function ShareDialog({
                 style={{ ...field, flex: 1 }}
               />
               <CopyButton value={templateUrl} testId="template" />
+              <StopButton testId="template" busy={busy} onStop={onStopTemplate} />
             </div>
           ) : (
             <>
@@ -202,6 +210,30 @@ function CopyButton({ value, testId }: { value: string; testId: string }) {
   );
 }
 
+/** Withdraws a link: it stops working for everyone who was sent it. */
+function StopButton({
+  testId,
+  busy,
+  onStop,
+}: {
+  testId: string;
+  busy: boolean;
+  onStop: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={`share-stop-${testId}`}
+      onClick={onStop}
+      disabled={busy}
+      title="The link stops working for everyone"
+      style={{ ...button, opacity: busy ? 0.6 : 1 }}
+    >
+      Stop sharing
+    </button>
+  );
+}
+
 function Offer({
   title,
   detail,
@@ -210,6 +242,7 @@ function Offer({
   url,
   busy,
   onCreate,
+  onStop,
 }: {
   title: string;
   detail: string;
@@ -218,6 +251,7 @@ function Offer({
   url: string | null;
   busy: boolean;
   onCreate: () => void;
+  onStop: () => void;
 }) {
   return (
     <section style={offer}>
@@ -234,6 +268,7 @@ function Offer({
             style={{ ...field, flex: 1 }}
           />
           <CopyButton value={url} testId={testId} />
+          <StopButton testId={testId} busy={busy} onStop={onStop} />
         </div>
       ) : (
         <button

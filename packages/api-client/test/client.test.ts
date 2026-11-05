@@ -437,3 +437,77 @@ describe("shareList options", () => {
     });
   });
 });
+
+describe("deleting and reporting", () => {
+  function recording(status: number, body?: unknown) {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const client = createClient({
+      baseUrl: BASE,
+      token: "secret",
+      fetch: (async (url: string, init: RequestInit) => {
+        calls.push({ url, init });
+        return status === 204
+          ? new Response(null, { status })
+          : jsonResponse(body ?? {}, status);
+      }) as unknown as typeof globalThis.fetch,
+    });
+    return { client, calls };
+  }
+
+  it("deletes a list with the token and reports it gone", async () => {
+    const { client, calls } = recording(204);
+    expect(await client.deleteList("list-1")).toBe(true);
+    expect(calls[0]!.url).toBe(`${BASE}/lists/list-1`);
+    expect(calls[0]!.init.method).toBe("DELETE");
+    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe("Bearer secret");
+  });
+
+  it("escapes the id it puts in the path", async () => {
+    const { client, calls } = recording(204);
+    await client.deleteList("a/b?c");
+    expect(calls[0]!.url).toBe(`${BASE}/lists/a%2Fb%3Fc`);
+  });
+
+  it("answers false, not an error, for a list that is already gone", async () => {
+    const { client } = recording(404, { error: "not found" });
+    expect(await client.deleteList("list-1")).toBe(false);
+  });
+
+  it("raises an ApiError for any other failure", async () => {
+    const { client } = recording(500, { error: "boom" });
+    await expect(client.deleteList("list-1")).rejects.toMatchObject({ status: 500 });
+  });
+
+  it("withdraws a share the same way", async () => {
+    const { client, calls } = recording(204);
+    expect(await client.unshareList("list-1")).toBe(true);
+    expect(calls[0]!.url).toBe(`${BASE}/lists/list-1/share`);
+    expect(calls[0]!.init.method).toBe("DELETE");
+
+    const gone = recording(404, { error: "not found" });
+    expect(await gone.client.unshareList("list-1")).toBe(false);
+  });
+
+  it("sends a report without a token, with only the fields it was given", async () => {
+    const { client, calls } = recording(201, { id: "r1" });
+    await client.reportShare({ code: "ABCD2345", reason: "spam" });
+    expect(calls[0]!.url).toBe(`${BASE}/reports`);
+    expect(calls[0]!.init.method).toBe("POST");
+    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBeUndefined();
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ code: "ABCD2345", reason: "spam" });
+
+    await client.reportShare({ code: "ABCD2345", reason: "abuse", note: "why" });
+    expect(JSON.parse(calls[1]!.init.body as string)).toEqual({
+      code: "ABCD2345",
+      reason: "abuse",
+      note: "why",
+    });
+  });
+
+  it("raises an ApiError for a report the server refuses", async () => {
+    const { client } = recording(404, { error: "not found" });
+    await expect(client.reportShare({ code: "ABCD2345", reason: "spam" })).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+});

@@ -11,6 +11,8 @@ function mount(overrides: Partial<Parameters<typeof ShareDialog>[0]> = {}) {
     viewUrl: null,
     onShareTemplate: vi.fn(),
     templateUrl: null,
+    onStopView: vi.fn(),
+    onStopTemplate: vi.fn(),
     busy: false,
     error: null,
     onClose: vi.fn(),
@@ -84,6 +86,27 @@ describe("ShareDialog", () => {
     expect(screen.getByTestId<HTMLInputElement>("share-url-template").value).toBe(
       "http://x/l/BBBBBBBB",
     );
+  });
+
+  it("offers to stop sharing only a link that exists, each to its own handler", () => {
+    mount();
+    expect(screen.queryByTestId("share-stop-view")).toBeNull();
+    expect(screen.queryByTestId("share-stop-template")).toBeNull();
+    cleanup();
+
+    const props = mount({ viewUrl: "http://x/l/AAAAAAAA", templateUrl: "http://x/l/BBBBBBBB" });
+    fireEvent.click(screen.getByTestId("share-stop-view"));
+    expect(props.onStopView).toHaveBeenCalledTimes(1);
+    expect(props.onStopTemplate).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("share-stop-template"));
+    expect(props.onStopTemplate).toHaveBeenCalledTimes(1);
+    expect(props.onStopView).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the stop buttons while a share is in flight", () => {
+    mount({ busy: true, viewUrl: "http://x/l/AAAAAAAA" });
+    expect(screen.getByTestId<HTMLButtonElement>("share-stop-view").disabled).toBe(true);
   });
 
   it("disables the create buttons while a share is in flight", () => {

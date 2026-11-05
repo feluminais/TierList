@@ -34,7 +34,9 @@ import { AnnotateLayer } from "./AnnotateLayer";
 import { downloadBytes, filenameFor } from "./download";
 import { EditSheet, type EditCanvasComponent } from "./EditSheet";
 import { NewItemSheet } from "./NewItemSheet";
+import { ContextBanner } from "./ContextBanner";
 import { ShareDialog } from "./ShareDialog";
+import { useContextRecovery } from "./useContextRecovery";
 import { useSessionEdits } from "./useSessionEdits";
 import { TierOverlay } from "./TierOverlay";
 import { TileEditOverlay } from "./TileEditButton";
@@ -495,6 +497,10 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
   // and the canvas, the hit-testing and the hover overlay must all be handed
   // the same one or a drop lands somewhere the user did not aim.
   const shellRef = useRef<HTMLDivElement | null>(null);
+  // A lost WebGL context is recovered by building the board again from the
+  // session: `recovery.epoch` is the key that remounts it. The document is
+  // never touched by a loss.
+  const recovery = useContextRecovery(shellRef);
   const [boardWidth, setBoardWidth] = useState(DEFAULT_BOARD_WIDTH);
   useEffect(() => {
     const shell = shellRef.current;
@@ -543,6 +549,8 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
         loading={!loaded}
       />
 
+      <ContextBanner lost={recovery.lost} stalled={recovery.stalled} onRecreate={recovery.recreate} />
+
       {filling ? <FillBanner placed={progress.placed} total={progress.total} /> : null}
 
       {addingItem ? (
@@ -571,7 +579,11 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
 
       {/* Until the list has loaded this is a placeholder: edits to it are
           ignored (see `useSessionEdits`), so it is not offered for them. */}
-      <div style={loaded ? undefined : { pointerEvents: "none", opacity: 0.6 }} aria-busy={!loaded}>
+      <div
+        key={recovery.epoch}
+        style={loaded ? undefined : { pointerEvents: "none", opacity: 0.6 }}
+        aria-busy={!loaded}
+      >
       {error ? (
         <pre style={{ color: "#f88", padding: 16 }}>{error}</pre>
       ) : !Board ? (
@@ -681,6 +693,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
       </div>
       {editingItem && EditCanvasComp ? (
         <EditSheet
+          key={recovery.epoch}
           item={editingItem}
           EditCanvas={EditCanvasComp}
           // The number, not the name: `aspectRatioFor` is the one place the

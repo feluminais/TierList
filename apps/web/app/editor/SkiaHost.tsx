@@ -12,18 +12,15 @@ import {
 } from "@tl/core";
 import {
   applyAction,
-  applyActions,
   aspectRatioFor,
   createSession,
   defaultCropFor,
   layoutBoard,
   type BoardLayout,
-  redoSession,
   resumeSession,
   saveFailed,
   saveStarted,
   saveSucceeded,
-  undoSession,
 } from "@tl/editor-core";
 import {
   useCallback,
@@ -38,6 +35,7 @@ import { downloadBytes, filenameFor } from "./download";
 import { EditSheet, type EditCanvasComponent } from "./EditSheet";
 import { NewItemSheet } from "./NewItemSheet";
 import { ShareDialog } from "./ShareDialog";
+import { useSessionEdits } from "./useSessionEdits";
 import { TierOverlay } from "./TierOverlay";
 import { TileEditOverlay } from "./TileEditButton";
 import { Toolbar } from "./Toolbar";
@@ -300,33 +298,12 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
   }, [listId, client, connection.state, draftStore]);
 
   // The clock lives here, at the boundary, exactly as it does in the gesture
-  // hook. A drag emits at most one action, so this runs once per completed
-  // drag and not once per frame.
-  //
-  // `applyAction` returns the *same session* for a no-op, so React bails out of
-  // the re-render and the autosave debounce is never restarted by an edit that
-  // changed nothing.
-  const dispatch = useCallback((action: TierListAction) => {
-    setSession((current) => applyAction(current, action, now()));
-  }, []);
-
-  /**
-   * Several actions as one edit — one undo step, one revision.
-   *
-   * The tier corner grip is what needs it: a diagonal drag moves two settings
-   * at once, and dispatching them separately would put two steps on the undo
-   * stack for one gesture and stop the run coalescing at all.
-   */
-  const dispatchAll = useCallback((actions: readonly TierListAction[]) => {
-    setSession((current) => applyActions(current, actions, now()));
-  }, []);
-
-  const undo = useCallback(() => {
-    setSession((current) => undoSession(current, now()));
-  }, []);
-  const redo = useCallback(() => {
-    setSession((current) => redoSession(current, now()));
-  }, []);
+  // hook. A drag emits at most one action, so a dispatch runs once per
+  // completed drag and not once per frame. Every edit is ignored until the
+  // list has loaded; see `useSessionEdits`. `dispatchAll` is one edit — one
+  // undo step, one revision — for the tier corner grip, whose diagonal drag
+  // moves two settings at once.
+  const { dispatch, dispatchAll, undo, redo } = useSessionEdits(setSession, loaded, now);
 
   const onTitleChange = useCallback(
     (title: string) => dispatch({ type: "meta/set", patch: { title } }),
@@ -348,6 +325,8 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
   // *upload started*, not when it finished — exactly the stale-read bug this
   // fix exists to avoid.
   const onUploaded = useCallback((asset: AssetResponse) => {
+    // An upload begun before the load finished must not land in the placeholder.
+    if (!loaded) return;
     const id = newId();
     setSession((current) => {
       const crop = defaultCropFor(
@@ -361,7 +340,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
         now(),
       );
     });
-  }, []);
+  }, [loaded]);
   const upload = useAssetUpload(client, onUploaded);
   const onAddImage = useCallback((file: File) => void upload.upload(file), [upload]);
 
@@ -590,6 +569,9 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
         />
       ) : null}
 
+      {/* Until the list has loaded this is a placeholder: edits to it are
+          ignored (see `useSessionEdits`), so it is not offered for them. */}
+      <div style={loaded ? undefined : { pointerEvents: "none", opacity: 0.6 }} aria-busy={!loaded}>
       {error ? (
         <pre style={{ color: "#f88", padding: 16 }}>{error}</pre>
       ) : !Board ? (
@@ -696,6 +678,7 @@ export default function SkiaHost({ listId }: SkiaHostProps) {
         </TierOverlay>
         )
       )}
+      </div>
       {editingItem && EditCanvasComp ? (
         <EditSheet
           item={editingItem}

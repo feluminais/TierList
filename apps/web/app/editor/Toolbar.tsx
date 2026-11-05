@@ -65,6 +65,13 @@ export function Toolbar({
   loading = false,
 }: ToolbarProps) {
   const save = saveReadout(session, connection, loading);
+  // Until the list has loaded this is a placeholder for a document that has not
+  // arrived: nothing that edits, exports or shares it means anything yet.
+  // Leaving for "My lists" is the one thing that stays available.
+  const undoOff = loading || !session.canUndo;
+  const redoOff = loading || !session.canRedo;
+  const exportOff = loading || !onExportImage;
+  const shareOff = loading || !onShare;
 
   return (
     <div style={bar}>
@@ -82,6 +89,7 @@ export function Toolbar({
         data-testid="title-input"
         value={session.doc.title}
         maxLength={DOCUMENT_LIMITS.titleLength}
+        disabled={loading}
         onChange={(event) => onTitleChange(event.target.value)}
         placeholder="Untitled tier list"
         style={{ ...field, flex: "1 1 220px", fontSize: 16 }}
@@ -91,8 +99,8 @@ export function Toolbar({
         type="button"
         data-testid="undo"
         onClick={onUndo}
-        disabled={!session.canUndo}
-        style={button(!session.canUndo)}
+        disabled={undoOff}
+        style={button(undoOff)}
       >
         Undo
       </button>
@@ -100,8 +108,8 @@ export function Toolbar({
         type="button"
         data-testid="redo"
         onClick={onRedo}
-        disabled={!session.canRedo}
-        style={button(!session.canRedo)}
+        disabled={redoOff}
+        style={button(redoOff)}
       >
         Redo
       </button>
@@ -110,8 +118,8 @@ export function Toolbar({
         type="button"
         data-testid="export-png"
         onClick={() => onExportImage?.("png")}
-        disabled={!onExportImage}
-        style={button(!onExportImage)}
+        disabled={exportOff}
+        style={button(exportOff)}
         title="Download the board as a PNG"
       >
         PNG
@@ -120,8 +128,8 @@ export function Toolbar({
         type="button"
         data-testid="export-jpg"
         onClick={() => onExportImage?.("jpg")}
-        disabled={!onExportImage}
-        style={button(!onExportImage)}
+        disabled={exportOff}
+        style={button(exportOff)}
         title="Download the board as a JPG"
       >
         JPG
@@ -130,7 +138,8 @@ export function Toolbar({
         type="button"
         data-testid="export-json"
         onClick={onExportJson}
-        style={button(false)}
+        disabled={loading}
+        style={button(loading)}
         title="Download the document — the answer to “it's just a picture”"
       >
         JSON
@@ -141,6 +150,7 @@ export function Toolbar({
           aria-label="Category"
           data-testid="category"
           value={session.doc.categoryId ?? ""}
+          disabled={loading}
           onChange={(event) => onCategory(event.target.value || null)}
           style={field}
         >
@@ -157,6 +167,7 @@ export function Toolbar({
         aria-label="Tags"
         data-testid="tags-input"
         defaultValue={session.doc.tags.join(", ")}
+        disabled={loading}
         // Uncontrolled, and committed on blur rather than per keystroke:
         // `normalizeTags` drops empties and lowercases, so feeding its output
         // back into a controlled field would eat the comma the moment it was
@@ -171,7 +182,8 @@ export function Toolbar({
         type="button"
         data-testid="annotate"
         onClick={onAnnotate}
-        style={button(false)}
+        disabled={loading}
+        style={button(loading)}
         title="Draw across the whole list"
       >
         Annotate
@@ -180,8 +192,8 @@ export function Toolbar({
         type="button"
         data-testid="share"
         onClick={() => onShare?.()}
-        disabled={!onShare}
-        style={button(!onShare)}
+        disabled={shareOff}
+        style={button(shareOff)}
         title="Share a link, or publish a template others can fill"
       >
         Share

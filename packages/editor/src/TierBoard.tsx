@@ -129,7 +129,7 @@ export function TierBoard({
   const rowSize = firstRow
     ? rowFontSize(firstRow.labelRect.width, firstRow.rect.height)
     : 24;
-  const tileSize = tileFontSize(doc.display.tileSize);
+  const tileSize = tileFontSize(board.tray.tile.width);
 
   // Both weights, always. Hooks cannot run per row, so the board loads each
   // once and picks per tier at draw time — the same constraint that makes one

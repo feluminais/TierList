@@ -112,6 +112,20 @@ describe("a tile never overflows the area it is laid into", () => {
     expect(tile.height / tile.width).toBeCloseTo(aspectRatioFor("portrait"), 1);
   });
 
+  it("shrinks a tile to exactly the room between its gaps, and puts it one gap in", () => {
+    // Portrait, roomy (gap 12), a tiles area 80 wide: room for a 56-wide tile.
+    const doc = sample({ tileSize: 96, tileAspect: "portrait", labelWidth: 56, density: "roomy" });
+    const layout = layoutBoard(doc, { width: 136 }); // 136 - 56 label = 80
+    const row = layout.rows[0]!;
+    const tile = row.tiles[0]!.rect;
+
+    expect(row.tilesRect.width).toBe(80);
+    expect(tile.width).toBe(80 - 2 * 12);
+    expect(tile.height).toBe(Math.round(96 * (4 / 3) * (56 / 96)));
+    expect(tile.x - row.tilesRect.x).toBe(12);
+    expect(row.tile).toEqual({ width: tile.width, height: tile.height });
+  });
+
   it("leaves a tile that already fits exactly as it was", () => {
     const doc = sample({ tileSize: 96, tileAspect: "portrait", labelWidth: 120, density: "normal" });
     const tile = layoutBoard(doc, { width: 800 }).rows[0]!.tiles[0]!.rect;
@@ -150,19 +164,34 @@ describe("layoutBoard with responsive on", () => {
     return tiles.filter((t) => t.rect.y === firstY).length;
   };
 
-  it("fits at least three tiles on a line at phone width, where the document's sizes give two", () => {
+  it("fits three tiles on a line at phone width, where the document's sizes give two", () => {
     const doc = phone();
     expect(tilesPerLine(layoutBoard(doc, { width: 343 }))).toBe(2);
-    expect(tilesPerLine(layoutBoard(doc, { width: 343, responsive: true }))).toBeGreaterThanOrEqual(3);
+    for (const width of [343, 360, 390]) {
+      expect(tilesPerLine(layoutBoard(doc, { width, responsive: true })), `width ${width}`).toBe(3);
+    }
+  });
+
+  it("gives up label width only as far as three tiles need, then shrinks the tiles", () => {
+    const doc = phone();
+    const phoneLayout = layoutBoard(doc, { width: 343, responsive: true }).rows[0]!;
+    // Three 96px tiles with 6px gaps need 312px; 343 - 312 = 31 is below the
+    // label floor, so the label sits at the floor and the tiles shrink to fit.
+    expect(phoneLayout.labelRect.width).toBe(MIN_LABEL_WIDTH);
+    expect(phoneLayout.tile.width).toBe(Math.floor((343 - MIN_LABEL_WIDTH - 6) / 3) - 6);
+
+    // A little wider, the label gives up only what is needed and tiles keep their size.
+    const wider = layoutBoard(doc, { width: 390, responsive: true }).rows[0]!;
+    expect(wider.tile.width).toBe(96);
+    expect(wider.labelRect.width).toBe(390 - 312);
   });
 
   it("narrows the label column and shrinks tiles, and never grows either", () => {
-    const doc = phone();
+    const doc = phone({ labelWidth: 40 });
     const plain = layoutBoard(doc, { width: 343 });
     const fitted = layoutBoard(doc, { width: 343, responsive: true });
-    expect(fitted.rows[0]!.labelRect.width).toBeLessThan(plain.rows[0]!.labelRect.width);
-    expect(fitted.rows[0]!.labelRect.width).toBeGreaterThanOrEqual(MIN_LABEL_WIDTH);
-    expect(fitted.rows[0]!.tiles[0]!.rect.width).toBeLessThan(plain.rows[0]!.tiles[0]!.rect.width);
+    expect(fitted.rows[0]!.labelRect.width).toBeLessThanOrEqual(plain.rows[0]!.labelRect.width);
+    expect(fitted.rows[0]!.tile.width).toBeLessThanOrEqual(plain.rows[0]!.tile.width);
   });
 
   it("keeps each tile's aspect and never drops below the smallest tile size", () => {
@@ -172,11 +201,31 @@ describe("layoutBoard with responsive on", () => {
     expect(tile.height / tile.width).toBeCloseTo(aspectRatioFor("portrait"), 1);
   });
 
-  it("is the same layout as without it once the board is wide enough", () => {
-    for (const width of [640, 800, 1280]) {
+  it("is the same layout as without it from the width where the document's own sizes fit", () => {
+    // 120px of label and three 96px tiles with 6px gaps need 432px.
+    for (let width = 432; width <= 1300; width += 17) {
       const doc = phone();
+      expect(layoutBoard(doc, { width, responsive: true }), `width ${width}`).toEqual(
+        layoutBoard(doc, { width }),
+      );
+    }
+  });
+
+  it("is also identical for a document whose label is narrower than the responsive floor", () => {
+    const doc = phone({ labelWidth: 40 });
+    for (const width of [500, 700, 1000]) {
       expect(layoutBoard(doc, { width, responsive: true })).toEqual(layoutBoard(doc, { width }));
     }
+  });
+
+  it("fits the largest tile in use, so a tier with a bigger override fits three too", () => {
+    const doc = phone({ override: 240 });
+    const fitted = layoutBoard(doc, { width: 343, responsive: true });
+    // The override tier is the first row; its three tiles share a line.
+    const bigRow = fitted.rows[0]!;
+    const firstY = bigRow.tiles[0]!.rect.y;
+    expect(bigRow.tiles.filter((t) => t.rect.y === firstY)).toHaveLength(3);
+    expect(bigRow.tile.width).toBeGreaterThan(fitted.rows[1]!.tile.width);
   });
 
   it("scales a tier's own tile size by the same factor, so tiers keep their proportions", () => {
@@ -205,13 +254,17 @@ describe("layoutBoard with responsive on", () => {
     expect(JSON.stringify(doc)).toBe(before);
   });
 
-  it("keeps every tile inside its area and consistent with hit testing", () => {
+  it("keeps every tile inside its area, and hit testing and drop targeting agree about each", () => {
     for (let width = 60; width <= 700; width += 17) {
-      const layout = layoutBoard(phone({ override: 200 }), { width, responsive: true });
-      for (const { tile, area } of everyTile(layout)) {
-        expect(inside(tile.rect, area), `width ${width}`).toBe(true);
-        if (tile.rect.width >= 1 && tile.rect.height >= 1) {
-          expect(contains(tile.rect, { x: tile.rect.x, y: tile.rect.y })).toBe(true);
+      for (const tileAspect of ASPECTS) {
+        const doc = sample({ tileSize: 120, tileAspect, labelWidth: 200, density: "roomy", override: 200 });
+        const layout = layoutBoard(doc, { width, responsive: true });
+        for (const { tile, area } of everyTile(layout)) {
+          expect(inside(tile.rect, area), `width ${width}`).toBe(true);
+          if (tile.rect.width < 1 || tile.rect.height < 1) continue;
+          const centre = { x: tile.rect.x + tile.rect.width / 2, y: tile.rect.y + tile.rect.height / 2 };
+          expect(hitTest(layout, centre), `width ${width}`).toMatchObject({ kind: "tile", itemId: tile.itemId });
+          expect(dropTargetAt(layout, centre, "not-this-one"), `width ${width}`).not.toBeNull();
         }
       }
     }

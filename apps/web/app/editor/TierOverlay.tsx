@@ -266,10 +266,15 @@ export function TierOverlay({
   const onGripDown = (rowId: string) => (event: ReactPointerEvent<HTMLDivElement>) => {
     event.stopPropagation();
     capturePointer(event.currentTarget, event.pointerId);
+    // From what is on screen, not from what is stored: on a board narrow
+    // enough for a responsive layout to have shrunk the tiles the two differ,
+    // and starting from the stored size would make the first pixel of a drag
+    // jump the tier to a size it was never drawn at.
+    const drawn = layout.rows.find((row) => row.rowId === rowId);
     gripRef.current = {
       rowId,
-      startSize: effectiveSizeOf(doc, rowId),
-      startLabelWidth: doc.display.labelWidth,
+      startSize: drawn?.tile.width ?? effectiveSizeOf(doc, rowId),
+      startLabelWidth: drawn?.labelRect.width ?? doc.display.labelWidth,
       origin: { x: event.clientX, y: event.clientY },
     };
   };

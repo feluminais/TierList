@@ -20,8 +20,6 @@ const MIN_TILES_WIDTH = 40;
 
 /** Tiles a responsive layout tries to fit on one line of a tier. */
 const RESPONSIVE_COLUMNS = 3;
-/** The share of a narrow board the label column may take when responsive. */
-const RESPONSIVE_LABEL_SHARE = 0.2;
 
 /**
  * What a tile may be scaled to, in px.
@@ -83,11 +81,13 @@ export interface LayoutOptions {
    * Fit the board to a narrow width instead of laying the document's sizes out
    * as stored.
    *
-   * The label column yields a share of a narrow board and tiles shrink, in
-   * proportion and never below `MIN_TILE_SIZE`, until three fit on a line — so
-   * a phone shows a usable board rather than two tiles to a tier. It only ever
-   * reduces: once the document's own sizes fit, the layout is exactly the one
-   * without this option, so widening the board never makes a tile smaller.
+   * Three tiles of the largest size in use are made to fit on a tier line, so
+   * a phone shows a usable board rather than two tiles to a tier. The label
+   * column gives up only the width that takes, down to `MIN_LABEL_WIDTH`; if
+   * that is not enough the tiles shrink, in proportion and never below
+   * `MIN_TILE_SIZE`. It only ever reduces: once the document's own sizes fit,
+   * the layout is exactly the one without this option, and widening the board
+   * never makes a tile smaller.
    *
    * This is how the board is drawn, not what the document says. Nothing is
    * written back, and every consumer of a layout must be given the same options
@@ -107,6 +107,13 @@ export interface RowBox {
   rect: Rect;
   labelRect: Rect;
   tilesRect: Rect;
+  /**
+   * The size a tile in this row is drawn at: the document's (or the row's own)
+   * size after a responsive layout has scaled it and a narrow row has fitted
+   * it. Present even when the row holds no tiles, so a control that resizes
+   * the row can start from what is on screen.
+   */
+  tile: Size;
   /** In placement index order, which is also reading order. */
   tiles: TileBox[];
 }
@@ -124,6 +131,8 @@ export interface TrayBox {
    * "the area tiles live in" without caring which kind of location it is.
    */
   tilesRect: Rect;
+  /** The size a tray tile is drawn at; see `RowBox.tile`. */
+  tile: Size;
   tiles: TileBox[];
 }
 
@@ -161,6 +170,8 @@ function columnsIn(available: number, tileWidth: number, gap: number): number {
 
 interface LaidTiles {
   tiles: TileBox[];
+  /** The tile size actually used, after fitting. */
+  tile: Size;
   /** The reserved leading slot, when one was asked for. */
   leadingRect?: Rect;
   /**
@@ -224,6 +235,7 @@ function layoutTiles(
   const lines = Math.max(1, Math.ceil((itemIds.length + leading) / columns));
   return {
     tiles,
+    tile,
     height: lines * (tile.height + gap) + gap,
     leadingRect: leading > 0 ? slotRect(0) : undefined,
   };
@@ -259,12 +271,19 @@ export function layoutBoard(doc: TierList, options: LayoutOptions): BoardLayout 
   const padding = options.padding ?? 0;
   const boardWidth = Math.max(0, options.width - padding * 2);
 
-  // A responsive board lets the label take only a share of a narrow width.
+  // The largest tile any tier is drawn at: the size a responsive board has to
+  // make three of fit, so one tier with a big override is fitted too.
+  const largest = Math.max(
+    doc.display.tileSize,
+    ...doc.rows.map((row) => row.tileSizeOverride ?? 0),
+  );
+
+  // A responsive board gives up label width only as far as three of those
+  // tiles need, never below the label floor and never more than the document
+  // asks for.
+  const needed = RESPONSIVE_COLUMNS * (largest + gap) + gap;
   const wantedLabel = options.responsive
-    ? Math.min(
-        doc.display.labelWidth,
-        Math.max(MIN_LABEL_WIDTH, Math.round(boardWidth * RESPONSIVE_LABEL_SHARE)),
-      )
+    ? Math.min(doc.display.labelWidth, Math.max(MIN_LABEL_WIDTH, boardWidth - needed))
     : doc.display.labelWidth;
 
   // The label yields before the tiles area becomes unusable, so a narrow
@@ -272,16 +291,16 @@ export function layoutBoard(doc: TierList, options: LayoutOptions): BoardLayout 
   const labelWidth = Math.max(0, Math.min(wantedLabel, boardWidth - MIN_TILES_WIDTH));
 
   // How much a responsive board shrinks every tile: enough that
-  // `RESPONSIVE_COLUMNS` fit across a tier, never below `MIN_TILE_SIZE`, never
-  // larger than the document asks. One factor for all of them, so tiers keep
-  // their sizes relative to each other.
+  // `RESPONSIVE_COLUMNS` of the largest fit across a tier, never below
+  // `MIN_TILE_SIZE`, never larger than the document asks. One factor for all of
+  // them, so tiers keep their sizes relative to each other.
   const scale = options.responsive
     ? Math.min(
         1,
         Math.max(
           MIN_TILE_SIZE,
           Math.floor((boardWidth - labelWidth - gap) / RESPONSIVE_COLUMNS) - gap,
-        ) / doc.display.tileSize,
+        ) / largest,
       )
     : 1;
   const scaled = (size: number) =>
@@ -310,6 +329,7 @@ export function layoutBoard(doc: TierList, options: LayoutOptions): BoardLayout 
       rect: { x: padding, y, width: boardWidth, height: laid.height },
       labelRect: { x: padding, y, width: labelWidth, height: laid.height },
       tilesRect: { ...tilesArea, height: laid.height },
+      tile: laid.tile,
       tiles: laid.tiles,
     });
 
@@ -331,6 +351,7 @@ export function layoutBoard(doc: TierList, options: LayoutOptions): BoardLayout 
   const tray: TrayBox = {
     rect: { x: padding, y, width: boardWidth, height: trayLaid.height },
     tilesRect: { ...trayArea, height: trayLaid.height },
+    tile: trayLaid.tile,
     tiles: trayLaid.tiles,
     ...(trayLaid.leadingRect ? { addSlot: trayLaid.leadingRect } : null),
   };

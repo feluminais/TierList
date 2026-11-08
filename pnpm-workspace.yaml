@@ -41,6 +41,7 @@ overrides:
   "js-yaml@>=4.0.0 <4.3.2": ^4.3.2
   "@xmldom/xmldom@>=0.8.0 <0.8.15": ^0.8.15
   "@xmldom/xmldom@>=0.9.0 <0.9.12": ^0.9.12
+  "shell-quote@>=1.8.4 <1.11.0": ^1.11.0
 allowBuilds:
   # The first three resolve their native binary from prebuilt platform-specific
   # optional deps (@esbuild/*, @img/sharp-*, @unrs/resolver-binding-*), so no
